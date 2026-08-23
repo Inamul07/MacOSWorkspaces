@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="macos-workspaces">
+  <schema id="org.gnome.shell.extensions.macos-workspaces"
+          path="/org/gnome/shell/extensions/macos-workspaces/">
+    <!-- Phase 1 ships the schema skeleton only. Keys are defined in Phase 5:
+         enabled, sync-primary-workspace, wrap-around, gesture-threshold. -->
+  </schema>
+</schemalist>
