@@ -236,14 +236,27 @@ required either way.
   rather than relative motion; defer until the relative case is proven.
 
 ### Manual Verification Checklist
-- [ ] `Ctrl`+`Alt`+`Right` with focus on monitor A advances **only** monitor A
-- [ ] Monitor B stays on its current virtual workspace throughout
-- [ ] Focus on monitor B while the cursor sits on monitor A: the keypress affects **B**
-- [ ] With no focused window, the keypress falls back to the cursor's monitor
-- [ ] A swipe followed by a keypress on the same monitor continues from the same index
+
+> **What "only monitor A" means before Phase 5.** Until persistence lands, this is
+> a claim about the *animation*, not the resulting content. A keypress on a
+> **secondary** monitor changes nothing anywhere else, because no workspace is
+> activated — so "only that monitor" holds completely. A keypress on the
+> **primary** activates GNOME's single global workspace, and with
+> `workspaces-only-on-primary=false` every other monitor re-renders it: the
+> secondary's content jumps, silently, with no animation. That is expected here
+> and is exactly what Phase 5's `syncMonitor()` removes.
+
+- [x] `Ctrl`+`Alt`+`Right` with focus on monitor A animates **only** monitor A
+- [x] No monitor other than A animates at any point
+- [x] Focus on monitor B while the cursor sits on monitor A: the keypress affects **B**
+- [x] With no focused window, the keypress falls back to the cursor's monitor
+- [x] At the first or last workspace the keypress is a no-op and says so in the log rather than failing silently (stock GNOME also refuses; wrap-around is Phase 7)
+- [ ] A swipe followed by a keypress on the same monitor continues from the same index — **fixed after first testing.** The keyboard originally derived its target from `V[m] + delta` while the gesture derived its from `baseMonitorGroup.findClosestWorkspace()`, which the Shell anchors to the *global active* workspace. The two diverged (keyboard reached workspace 2 where gestures never exceeded 1), and worse, `_switchMonitor` eased from the global-anchored position toward a `V[m]`-derived target — so the slide ran **backwards** whenever the two disagreed. Both paths now anchor on the active workspace, and `_switchMonitor` pins `monitorGroup.progress` to the from-workspace before easing, the way stock `animateSwitch` does. Phase 5 moves the anchor to `V[m]` for both paths at once.
 - [ ] Keyboard animation is visually identical to the swipe animation
-- [ ] Keypress on the primary monitor still activates the matching global workspace
-- [ ] `disable()` restores global keyboard switching immediately
+- [x] Keypress on the primary monitor still activates the matching global workspace
+- [x] Keypress on a **secondary** monitor leaves the primary untouched — no animation, no workspace change
+- [x] Keypress on the **primary** changes the secondary's content without animating it (expected until Phase 5)
+- [x] `disable()` restores global keyboard switching immediately — both monitors move together again
 - [ ] `move-to-workspace-*` still behaves exactly as stock (untouched this phase)
 
 ---
@@ -335,6 +348,13 @@ it in the README rather than pretending it is a bug to fix.
 - `lib/animationDriver.js` — `AnimationDriver` class
   - Wraps `MonitorGroup.ease_property('progress', ...)` with `EASE_OUT_CUBIC` curve and duration constants matching stock `_switchWorkspaceEnd`
   - Handles gesture interruption: if a second swipe begins before the first animation completes, snaps the in-progress animation then starts cleanly
+  - Note on teardown: `environment.js:61-66` calls `onComplete` only when a
+    transition finishes naturally, so any teardown hung off it is skipped when
+    `remove_all_transitions()` interrupts the ease. Stock GNOME uses the same
+    pattern and relies on the interrupting gesture's own `end` to finish the
+    switch, which holds because `SwipeTracker` emits `end` even on cancel. If the
+    driver ever moves teardown out of that chain it must use `onStopped`, which
+    always fires.
 - Sticky-window groups (windows on all workspaces) remain visible on all monitors throughout any transition — the Shell builds these itself in `_prepareWorkspaceSwitch()`, so this is a *verification* item, not something we construct
 - **Verify** right-to-left locales behave correctly. `MonitorGroup` already handles RTL internally (`workspaceAnimation.js:204, 244, 253, 274, 412`) and so does `swipeTracker.js:660`, so this is inherited for free *provided Phase 3 drives the Shell's progress math instead of computing its own*. Only if that assumption breaks does this become implementation work.
 - **Verify** vertical workspace layouts (`workspace_manager.layout_rows === -1`). Stock `_switchWorkspaceBegin` already sets `tracker.orientation` from this; our `_onBegin` must preserve that logic.
@@ -474,6 +494,7 @@ it in the README rather than pretending it is a bug to fix.
 | Another extension also overrides `switch-to-workspace-*` keybindings | Medium | Medium | Detect a non-stock handler at enable time; log and skip the keyboard phase rather than clobbering |
 | Conflict with another extension patching the same methods | Medium | Medium | Detect conflict at enable time; log clear warning |
 | External workspace change desyncs `V[m]` from screen, compounding on each swipe | **High** until Phase 8 | **High** | `syncOnExternalSwitch` (Phase 8) reconciles on the Shell's own `switch-workspace` signal; until then, detect and log |
+| Another per-monitor workspace extension runs alongside ours (e.g. Smart Workspace Manager) | Medium | **High** | Both move/animate workspaces and corrupt each other's model; SWM's delayed window moves race the Shell's animation and throw `record is undefined` from `_syncStacking`. Detect known-conflicting UUIDs at enable time and warn |
 | Reassignment strands or loses windows if the Shell dies mid-sync | Low | **High** | `restoreAll()` on disable; never move primary-monitor windows; refuse to run under dynamic workspaces |
 | Overview / switcher / alt-tab disagree with what the user sees | High | Low | Inherent to reassignment; documented in the README as accepted divergence, not a defect |
 | Another extension also moves windows between workspaces | Medium | Medium | `WindowTracker` follows `workspace-changed` and updates its record rather than fighting the other extension |

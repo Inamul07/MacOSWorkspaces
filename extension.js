@@ -8,14 +8,16 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {getCursorMonitorIndex} from './lib/cursorMonitor.js';
 import {GestureHandler} from './lib/gestureHandler.js';
+import {KeybindingHandler} from './lib/keybindingHandler.js';
 import {MonitorStateManager} from './lib/monitorState.js';
 import {checkCompatibility, createInterop} from './lib/shellInterop.js';
 
 /**
  * Entry point for the MacOS Workspaces extension.
  *
- * As of Phase 3 this intercepts swipe gestures and drives a single monitor's
- * slide. Keyboard switching still behaves globally — that is Phase 4.
+ * As of Phase 4 both input paths are per-monitor: swipe gestures and the
+ * directional workspace keybindings. The new workspace does not yet persist on a
+ * secondary monitor — that is Phase 5.
  */
 export default class MacOSWorkspacesExtension extends Extension {
     /**
@@ -37,6 +39,10 @@ export default class MacOSWorkspacesExtension extends Extension {
             interop: this._interop,
             monitorState: this._monitorState,
         });
+        this._keybindingHandler = new KeybindingHandler({
+            interop: this._interop,
+            monitorState: this._monitorState,
+        });
 
         console.log(`[macos-workspaces] enabled (v${this.metadata['version-name']}) — ` +
             `cursor on monitor ${getCursorMonitorIndex(this._interop)}`);
@@ -47,7 +53,10 @@ export default class MacOSWorkspacesExtension extends Extension {
      * Must leave the Shell in exactly the state it was in before `enable()`.
      */
     disable() {
-        // Restore the Shell's gesture handling before dropping the state it reads.
+        // Restore the Shell's own input handling before dropping the state it reads.
+        this._keybindingHandler?.destroy();
+        this._keybindingHandler = null;
+
         this._gestureHandler?.destroy();
         this._gestureHandler = null;
 
