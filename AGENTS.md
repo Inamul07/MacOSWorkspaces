@@ -34,6 +34,11 @@ When GNOME is configured with "Workspaces on All Displays" (`org.gnome.mutter wo
 | `Main.wm._workspaceAnimation` | `js/ui/main.js` | Entry point to the animation controller |
 | `WorkspaceAnimationController` | `js/ui/workspaceAnimation.js` | Owns `SwipeTracker` and `MonitorGroup` actors |
 | `SwipeTracker` | `js/ui/swipeTracker.js` | Emits `begin(monitor)`, `update(progress)`, `end(duration, endProgress)` |
+| `wac._swipeTracker` | `js/ui/workspaceAnimation.js:338` | **The interception point** — we take over its three signals |
+| `MonitorGroup.updateSwipeForMonitor()` | `js/ui/workspaceAnimation.js:310` | Per-monitor progress; handles RTL and vertical layouts for us |
+| `MonitorGroup.index` | `js/ui/workspaceAnimation.js:261` | Monitor identity the state map is keyed on |
+| `Main.wm.setCustomKeybindingHandler()` | `js/ui/windowManager.js:1095` | Keyboard interception point (Phase 4) |
+| `Main.wm._showWorkspaceSwitcher` | `js/ui/windowManager.js:560-596` | Stock keybinding handler; restore target on disable |
 | `MonitorGroup` | `js/ui/workspaceAnimation.js` | Per-physical-monitor slide actor; `.progress` drives animation |
 | `global.workspace_manager` | Mutter GObject | Logical workspace creation/activation |
 | `global.display.get_monitor_index_for_rect()` | Mutter | Maps cursor coordinates to monitor index |
@@ -389,17 +394,24 @@ Execute inside a nested Wayland session (`./scripts/dev-session.sh`):
 - [ ] After `disable`: global swipe behavior restored (both monitors switch together)
 - [ ] After `disable` + re-`enable`: per-monitor behavior resumes
 
-#### Phase 4 — Animation Quality
+#### Phase 4 — Keyboard Switching
+- [ ] `Ctrl`+`Alt`+`Right` with focus on monitor A advances only monitor A
+- [ ] Focus on B while cursor is on A: the keypress affects B
+- [ ] Swipe then keypress on the same monitor continue from the same index
+- [ ] After `disable`: global keyboard switching restored
+- [ ] `move-to-workspace-*` unchanged from stock
+
+#### Phase 5 — Animation Quality
 - [ ] Slide animation speed and easing match native GNOME workspace switch
 - [ ] Interrupting a gesture mid-animation does not crash the Shell
 - [ ] Sticky windows (on all workspaces) remain visible on all monitors
 
-#### Phase 5 — Settings
+#### Phase 6 — Settings
 - [ ] Each settings change takes effect immediately (no restart needed)
 - [ ] `wrap-around: true` enables circular navigation
 - [ ] `sync-primary-workspace: false` decouples primary monitor from global workspace
 
-#### Phase 6 — Robustness
+#### Phase 7 — Robustness
 - [ ] Connect a monitor mid-session: managed immediately
 - [ ] Disconnect a monitor mid-session: no crash
 - [ ] Lock/unlock screen cycle: normal behavior
@@ -429,20 +441,40 @@ The extension runs entirely within the GJS sandbox of the GNOME Shell process. I
 - Request D-Bus system bus services that require elevated permissions
 
 ### GSettings Schema Safety
-- The schema must declare only the keys documented in `plan.md § Phase 5`.
+- The schema must declare only the keys documented in `plan.md § Phase 6`.
 - New settings keys must never expose raw JavaScript evaluation, shell command strings, or file paths from user input.
 
-### Monkey-Patching Scope
-The extension replaces exactly **three methods** on `WorkspaceAnimationController`. These patches:
+### Interception Scope
+The extension takes over exactly **three signal handlers** on the
+`WorkspaceAnimationController`'s `SwipeTracker` — `begin`, `update` and `end`. This
+takeover:
 - Must **always** be reverted in `disable()` / `destroy()`, even if `enable()` threw an error
 - Must **never** suppress or swallow exceptions from GNOME Shell code
-- Must restore originals verbatim:
-  ```js
-  // Store
-  this._origBegin = wac._switchWorkspaceBegin.bind(wac);
-  // Restore
-  wac._switchWorkspaceBegin = this._origBegin;
-  ```
+- Must leave `WorkspaceAnimationController`'s own methods untouched, so restoration is exact
+
+> ⚠️ **Do not reassign `wac._switchWorkspaceBegin` / `Update` / `End`.**
+> `workspaceAnimation.js:335-337` connects the tracker to `.bind(this)` copies made in
+> the constructor. `.bind()` snapshots the function, so the tracker keeps calling the
+> original no matter what you assign to the instance property afterwards. A patch
+> written that way loads cleanly, logs nothing unusual, and silently never intercepts
+> anything — the worst possible failure mode. Verified on GNOME Shell 46.0.
+
+```js
+// Take over: drop the Shell's handlers (we hold no ids), then connect ours.
+for (const name of ['begin', 'update', 'end']) {
+    const id = GObject.signal_lookup(name, tracker.constructor.$gtype);
+    GObject.signal_handlers_disconnect_matched(
+        tracker, GObject.SignalMatchType.ID, id, 0, null, null, null);
+}
+this._ids = [tracker.connect('begin', this._onBegin.bind(this)), /* ... */];
+
+// Restore: disconnect this._ids, then reconnect the Shell's own untouched methods.
+tracker.connect('begin', wac._switchWorkspaceBegin.bind(wac));
+```
+
+Never substitute a different `SwipeTracker` instance for `wac._swipeTracker`: the
+constructor binds `compositor-modifiers` to that specific object
+(`workspaceAnimation.js:339-341`) and a replacement silently loses it.
 
 ### Dependency Policy
 - **Zero external npm/pip/apt dependencies** beyond what ships with Ubuntu 24.04.
