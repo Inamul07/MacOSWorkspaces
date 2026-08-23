@@ -6,20 +6,25 @@
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {getCursorMonitorIndex} from './lib/cursorMonitor.js';
+import {MonitorStateManager} from './lib/monitorState.js';
+
 /**
  * Entry point for the MacOS Workspaces extension.
  *
- * Phase 1 deliberately performs no work: `enable()` and `disable()` are a
- * clean round trip with zero side effects, which is the scaffold's whole
- * contract. The per-monitor state engine, gesture interception and animation
- * driver arrive in later phases and will be constructed and torn down here.
+ * As of Phase 2 this owns the per-monitor state engine and nothing else: no
+ * gesture is intercepted and no workspace is switched. Gesture interception
+ * arrives in Phase 3 and will read from the same state manager built here.
  */
 export default class MacOSWorkspacesExtension extends Extension {
     /**
      * Called when the extension is enabled by GNOME Shell.
      */
     enable() {
-        console.log(`[macos-workspaces] enabled (v${this.metadata['version-name']})`);
+        this._monitorState = new MonitorStateManager();
+
+        console.log(`[macos-workspaces] enabled (v${this.metadata['version-name']}) — ` +
+            `cursor on monitor ${getCursorMonitorIndex()}`);
     }
 
     /**
@@ -27,6 +32,9 @@ export default class MacOSWorkspacesExtension extends Extension {
      * Must leave the Shell in exactly the state it was in before `enable()`.
      */
     disable() {
+        this._monitorState?.destroy();
+        this._monitorState = null;
+
         console.log('[macos-workspaces] disabled');
     }
 }

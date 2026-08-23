@@ -29,12 +29,14 @@ command -v dbus-run-session >/dev/null || die 'dbus-run-session not found (insta
 
 # Mutter's --nested backend is MetaBackendX11Nested: it parents itself to an X
 # display, which on a Wayland desktop means the session's XWayland server. So
-# DISPLAY is the hard requirement here, not WAYLAND_DISPLAY. Over SSH neither is
-# inherited, hence the explicit hint.
+# DISPLAY is the hard requirement here, not WAYLAND_DISPLAY.
+#
+# Supplying DISPLAY by hand over ssh is not a workaround: the session that
+# results starts far enough to load extensions but never finishes, leaving a
+# shell that answers no D-Bus calls. Run this from the desktop instead.
 if [[ -z "${DISPLAY:-}" ]]; then
     echo 'dev-session: DISPLAY is not set — the nested backend needs an X display.' >&2
-    echo 'dev-session: run from a terminal inside the desktop session, or over ssh:' >&2
-    echo "dev-session:   DISPLAY=:1 XAUTHORITY=\$(ls ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/.mutter-Xwaylandauth.* | head -1) $0" >&2
+    echo 'dev-session: run this from a terminal inside the desktop session.' >&2
     exit 1
 fi
 
