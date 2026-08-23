@@ -70,11 +70,11 @@ Key GNOME Shell internal objects (stable in GNOME 46):
   (the module itself is built in Phase 3, once there is a version guard and a
   second consumer to justify it; Phase 2's modules are refactored through it then)
 
-### Manual Verification Checklist
-- [ ] `gnome-extensions enable macos-workspaces@macosworkspaces.dev` succeeds in nested Wayland session
-- [ ] `journalctl -f -o cat /usr/bin/gnome-shell` shows no errors on enable or disable
-- [ ] Prefs window opens without crash
-- [ ] `glib-compile-schemas schemas/` exits with code 0
+### Manual Verification Checklist — ✅ complete
+- [x] `gnome-extensions enable macos-workspaces@macosworkspaces.dev` succeeds in nested Wayland session
+- [x] `journalctl -f -o cat /usr/bin/gnome-shell` shows no errors on enable or disable
+- [x] Prefs window opens without crash — confirmed via the AT-SPI tree (`[frame] 'MacOS Workspaces'` → page `General` → group `MacOS Workspaces`); `org.gnome.Shell.Screenshot` is access-denied on GNOME 46, so accessibility is the way to prove window content
+- [x] `glib-compile-schemas schemas/` exits with code 0 (`--strict`)
 
 ---
 
@@ -95,11 +95,19 @@ Key GNOME Shell internal objects (stable in GNOME 46):
 > take those dependencies from `lib/shellInterop.js`, which is what makes them
 > unit-testable (see Phase 8).
 
-### Manual Verification Checklist
-- [ ] One state entry per connected monitor initialised at `enable()` time
-- [ ] Unplugging a monitor removes its entry; re-plugging adds it at index 0
-- [ ] Adding/removing a workspace clamps all out-of-range indices to `[0, n-1]`
-- [ ] Log output confirms correct monitor index when cursor is on each display
+### Manual Verification Checklist — 3 of 4 complete
+Verified on real hardware (LVDS-1 + VGA-1, GNOME Shell 46.0), not a nested session.
+
+- [x] One state entry per connected monitor initialised at `enable()` time — `state initialised — 2 monitors, 1 workspaces: [0]=0 [1]=0`
+- [x] Unplugging a monitor removes its entry; re-plugging adds it at index 0 — driven through `org.gnome.Mutter.DisplayConfig.ApplyMonitorsConfig`, which produces a genuine `monitors-changed`; a nested session's dummy monitors cannot be hotplugged
+- [ ] Adding/removing a workspace clamps all out-of-range indices to `[0, n-1]` — **deferred to Phase 3.** Unobservable by construction until something sets a non-zero index: with every entry at 0 the clamp has nothing to clamp. The `notify::n-workspaces` handler is confirmed live, and the arithmetic has unit coverage.
+- [x] Log output confirms correct monitor index when cursor is on each display — pointer physically on the Dell → `monitor 1`; on the laptop → `monitor 0`
+
+> **Testing note:** pointer injection under Wayland is not available to us.
+> `XWarpPointer` via XWayland moves only X's shadow of the pointer (and GDK reads
+> back that same shadow, so the result is circular and misleading), and Mutter's
+> `RemoteDesktop` API ignores input from a session not authorised through the
+> portal. Cursor-position tests need a human to move the mouse.
 
 ---
 
