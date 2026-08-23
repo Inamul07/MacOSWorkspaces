@@ -235,7 +235,7 @@ required either way.
 - `switch-to-workspace-1` … `-12` and `switch-to-workspace-last` — absolute jumps
   rather than relative motion; defer until the relative case is proven.
 
-### Manual Verification Checklist
+### Manual Verification Checklist — ✅ complete
 
 > **What "only monitor A" means before Phase 5.** Until persistence lands, this is
 > a claim about the *animation*, not the resulting content. A keypress on a
@@ -251,8 +251,8 @@ required either way.
 - [x] Focus on monitor B while the cursor sits on monitor A: the keypress affects **B**
 - [x] With no focused window, the keypress falls back to the cursor's monitor
 - [x] At the first or last workspace the keypress is a no-op and says so in the log rather than failing silently (stock GNOME also refuses; wrap-around is Phase 7)
-- [ ] A swipe followed by a keypress on the same monitor continues from the same index — **fixed after first testing.** The keyboard originally derived its target from `V[m] + delta` while the gesture derived its from `baseMonitorGroup.findClosestWorkspace()`, which the Shell anchors to the *global active* workspace. The two diverged (keyboard reached workspace 2 where gestures never exceeded 1), and worse, `_switchMonitor` eased from the global-anchored position toward a `V[m]`-derived target — so the slide ran **backwards** whenever the two disagreed. Both paths now anchor on the active workspace, and `_switchMonitor` pins `monitorGroup.progress` to the from-workspace before easing, the way stock `animateSwitch` does. Phase 5 moves the anchor to `V[m]` for both paths at once.
-- [ ] Keyboard animation is visually identical to the swipe animation
+- [x] A swipe followed by a keypress on the same monitor continues from the same index — **fixed after first testing.** The keyboard originally derived its target from `V[m] + delta` while the gesture derived its from `baseMonitorGroup.findClosestWorkspace()`, which the Shell anchors to the *global active* workspace. The two diverged (keyboard reached workspace 2 where gestures never exceeded 1), and worse, `_switchMonitor` eased from the global-anchored position toward a `V[m]`-derived target — so the slide ran **backwards** whenever the two disagreed. Both paths now anchor on the active workspace, and `_switchMonitor` pins `monitorGroup.progress` to the from-workspace before easing, the way stock `animateSwitch` does. Phase 5 moves the anchor to `V[m]` for both paths at once.
+- [x] Keyboard animation is visually identical to the swipe animation
 - [x] Keypress on the primary monitor still activates the matching global workspace
 - [x] Keypress on a **secondary** monitor leaves the primary untouched — no animation, no workspace change
 - [x] Keypress on the **primary** changes the secondary's content without animating it (expected until Phase 5)
