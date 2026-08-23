@@ -93,7 +93,7 @@ Key GNOME Shell internal objects (stable in GNOME 46):
 
 > Both modules initially read `Main`/`global` directly. Phase 3 refactors them to
 > take those dependencies from `lib/shellInterop.js`, which is what makes them
-> unit-testable (see Phase 8).
+> unit-testable (see Phase 9).
 
 ### Manual Verification Checklist — 3 of 4 complete
 Verified on real hardware (LVDS-1 + VGA-1, GNOME Shell 46.0), not a nested session.
@@ -121,7 +121,7 @@ Verified on real hardware (LVDS-1 + VGA-1, GNOME Shell 46.0), not a nested sessi
   - `checkCompatibility()` — verifies every symbol this extension depends on exists, returning a reason string when it does not, so `enable()` can bail out cleanly (Risk Register: renamed internals)
   - Accessors for `Main.wm._workspaceAnimation`, its `_swipeTracker`, `Main.layoutManager`, `global.workspace_manager`, and the pointer
   - Phase 2's `monitorState.js` and `cursorMonitor.js` are refactored to take their dependencies from here rather than reaching into `Main`/`global` directly
-  - Every dependency is injectable, which is what makes the Phase 8 unit tests possible at all
+  - Every dependency is injectable, which is what makes the Phase 9 unit tests possible at all
 - `lib/gestureHandler.js` — `GestureHandler` class that **takes over the SwipeTracker's signal handlers**:
   - **`_onBegin(tracker, monitorIndex)`** — records active monitor; calls `tracker.confirmSwipe()` scoped to that monitor's snap points
   - **`_onUpdate(tracker, progress)`** — drives `updateSwipeForMonitor()` on the active monitor's `MonitorGroup` only; all others remain frozen
@@ -173,14 +173,26 @@ alternative: the constructor binds `compositor-modifiers` to that specific insta
 `getSnapPoints()`, `getWorkspaceProgress()`, `findClosestWorkspace()`,
 `updateSwipeForMonitor()` and an `index` getter. Drive those rather than computing
 progress ourselves. They already handle right-to-left locales and vertical
-layouts internally, which is why Phase 5 only has to *verify* those cases.
+layouts internally, which is why Phase 6 only has to *verify* those cases.
 
-### Manual Verification Checklist
-- [ ] Three-finger swipe on monitor A moves **only** monitor A
-- [ ] Monitor B remains frozen on its current virtual workspace during the gesture
-- [ ] Rapid back-to-back swipes on the same monitor do not crash the Shell
-- [ ] `disable()` restores original global-switch behavior immediately
-- [ ] Swipe on the primary monitor still activates the matching global workspace
+### Manual Verification Checklist — ✅ complete
+Verified on real hardware (LVDS-1 primary + VGA-1, GNOME Shell 46.0) across ~80
+gestures with zero JS errors. Driven by `Super`+two-finger-scroll, which reaches
+the same SwipeTracker as a three-finger swipe (`swipeTracker.js:463` leaves
+`allowScroll` true); the tracker rejects mouse-wheel scroll, so a touchpad is
+required either way.
+
+- [x] Three-finger swipe on monitor A moves **only** monitor A
+- [x] Monitor B remains frozen on its current virtual workspace during the gesture
+- [x] Rapid back-to-back swipes on the same monitor do not crash the Shell
+- [x] `disable()` restores original global-switch behavior immediately — `gesture handlers restored`, then both monitors move together again
+- [x] Swipe on the primary monitor still activates the matching global workspace
+
+> **Known limitation carried out of this phase.** The gesture is routed correctly
+> and `MonitorStateManager` records the right index, but nothing reads that index
+> back: a non-primary monitor animates and then snaps to GNOME's global workspace,
+> and a primary swipe drags every other monitor with it. See *Per-Monitor
+> Persistence* below — no phase currently delivers this.
 
 ---
 
@@ -208,7 +220,7 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
     (`global.display.get_focus_window()?.get_monitor()`), else the cursor's monitor
     via `cursorMonitor.js`, else the primary. macOS keys off focus, so focus wins.
   - Advances that monitor's index in `MonitorStateManager`, honouring the
-    `wrap-around` setting from Phase 6
+    `wrap-around` setting from Phase 7
   - Drives the same `MonitorGroup` animation as the gesture path, through the
     shared `animationDriver.js` — keyboard and swipe must not diverge visually
   - Calls `workspace.activate()` **only** when the target monitor is the primary
@@ -236,7 +248,86 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
 
 ---
 
-## Phase 5 — Animation & Visual Polish
+## Phase 5 — Per-Monitor Persistence (non-primary)
+
+**Goal:** Make a secondary monitor actually *display* its own virtual workspace
+instead of collapsing back to GNOME's global one.
+
+> **Why this phase exists.** Phases 3-4 route input correctly and record the right
+> index, but nothing reads that index back, so a secondary monitor animates and
+> then snaps to the global workspace. GNOME has exactly one global workspace and
+> binds windows to workspaces globally, with no per-monitor concept. The Shell's
+> own switch animation renders `Clutter.Clone` actors
+> (`workspaceAnimation.js:_createClone`), so keeping those actors alive past the
+> gesture would leave a frozen, non-interactive image — that route is closed.
+
+### Mechanism
+
+Only the global workspace `G` is ever rendered. For a secondary monitor `m` whose
+virtual index is `V[m]`, move the windows belonging to `(m, V[m])` onto `G`, and
+move the rest of that monitor's windows off it. The primary monitor keeps using
+GNOME's real workspace exactly as it does today and its windows are **never**
+moved — that is what keeps the blast radius small.
+
+### Deliverables
+- `lib/windowTracker.js` — `WindowTracker`
+  - `Map<Meta.Window, {monitor, virtualWorkspace}>` recording where each window
+    really belongs, independent of the workspace it is currently parked on
+  - Attributes windows to monitors by frame-rect ∩ monitor geometry, matching
+    `WorkspaceGroup._windowIsOnThisMonitor` so our view agrees with the Shell's
+    (deliberately *not* `Meta.Window.get_monitor()`)
+  - Ignores sticky (`is_on_all_workspaces()`), override-redirect and
+    `Meta.WindowType.DESKTOP` windows
+  - Follows `window-created`, `unmanaged`, `workspace-changed` and monitor-enter
+    or -leave so user-initiated moves update our record rather than fighting it
+- `lib/workspaceReassigner.js` — `WorkspaceReassigner`
+  - `syncMonitor(monitorIndex)` — brings `(m, V[m])` windows onto `G` and moves
+    the others away, via `Meta.Window.change_workspace_by_index()`
+  - Refuses to touch any window on the primary monitor
+  - Suppresses its own `workspace-changed` notifications so reassignment cannot
+    feed back into `WindowTracker`
+  - Never runs while a gesture is in flight
+  - `restoreAll()` — on `disable()`, returns every window to the workspace our
+    records say it belongs to
+- `gestureHandler._onEnd` and Phase 4's keybinding handler call `syncMonitor()`
+  once a switch settles
+
+### Hard requirement: static workspaces
+Dynamic workspaces are created and destroyed as they are used, which reindexes
+everything and corrupts the mapping. Detect `org.gnome.mutter dynamic-workspaces`
+at enable time; if true, log a clear warning and leave persistence off rather
+than risk stranding windows. The published prior art carries the same restriction.
+
+### Accepted divergence
+Reassignment means the Overview, workspace switcher and alt-tab show windows on
+the workspace they are *parked* on, not the one the user perceives. This is
+inherent to the approach — the only alternative GNOME offers is
+`workspaces-only-on-primary`, which gives secondaries no stacks at all. Document
+it in the README rather than pretending it is a bug to fix.
+
+> **Known exposure until Phase 8.** Until `syncOnExternalSwitch` lands, any
+> workspace change this extension did not cause — `Ctrl`+`Alt`+arrow before Phase 4,
+> an Overview thumbnail click, a notification stealing focus, `wmctrl` — leaves the
+> secondary monitor showing the wrong virtual workspace *and* leaves `V[m]`
+> disagreeing with what is on screen. Subsequent swipes then compute from a wrong
+> baseline and compound the error, which is how windows end up parked on
+> workspaces the user cannot reach. Worth logging a warning on detected desync
+> during this phase even though the fix arrives later.
+
+### Manual Verification Checklist
+- [ ] Swipe on the secondary: it shows a different set of windows and **stays** there
+- [ ] The primary monitor's windows never change workspace
+- [ ] Swiping on the primary no longer drags the secondary's contents with it
+- [ ] A window opened on the secondary while it shows virtual workspace 2 is still there after switching away and back
+- [ ] Sticky (on-all-workspaces) windows stay visible on both monitors throughout
+- [ ] Moving a window between workspaces by hand updates the record instead of being undone
+- [ ] `disable()` returns every window to its original workspace
+- [ ] With `dynamic-workspaces=true`, persistence stays off and logs a clear warning
+- [ ] Fullscreen window on the secondary does not strand or lose the window
+
+---
+
+## Phase 6 — Animation & Visual Polish
 
 **Goal:** Make per-monitor animation visually match GNOME's native slide quality and feel.
 
@@ -259,7 +350,7 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
 
 ---
 
-## Phase 6 — Settings & Preferences UI
+## Phase 7 — Settings & Preferences UI
 
 **Goal:** Allow runtime configuration of all meaningful behaviors without editing code.
 
@@ -282,11 +373,25 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
 ---
 
 
-## Phase 7 — Edge Cases & Robustness
+## Phase 8 — Edge Cases & Robustness
 
 **Goal:** Harden the extension against real-world runtime scenarios and lifecycle events.
 
 ### Deliverables
+- **`syncOnExternalSwitch`** — reconcile after any workspace change the extension
+  did not cause. Added to `workspaceReassigner.js`:
+  - Connect to the Shell's `switch-workspace` signal (`windowManager.js:529`), or
+    `workspace_manager::notify::active-workspace`
+  - When the global workspace changes and it was not our own gesture or keybinding:
+    set the primary monitor's virtual index to the new global workspace, then
+    re-run `syncMonitor()` for every secondary so each keeps showing its own index
+  - **Must ignore its own `change_workspace()` calls**, or reassignment re-triggers
+    the handler and loops. Reuse the suppression flag `WorkspaceReassigner` already
+    needs for `WindowTracker`.
+  - Covers every input path interception cannot reach: Overview thumbnail clicks,
+    a notification pulling focus to another workspace, `wmctrl -s`, other
+    extensions, `switch-to-workspace-1…12` and `-last` (Phase 4 only overrides the
+    four directional bindings), and any path added by a future GNOME release
 - Monitor hotplug/unplug mid-session — no crash; state added/removed cleanly
 - Workspace creation/deletion via keyboard shortcuts or other extensions — indices clamped
 - Overview open/close — swipe tracker disabled when Overview is showing; re-enabled on hide
@@ -303,10 +408,15 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
 - [ ] Lock and unlock the screen: normal behavior on both sides of the lock
 - [ ] Enable/disable 10 times: no memory growth visible in Looking Glass
 - [ ] Toggle "Workspaces on all displays" in GNOME Settings while extension is active: no crash
+- [ ] Secondary monitor holds its own workspace when the global one changes via `Ctrl`+`Alt`+arrow
+- [ ] Same when switching from the Overview by clicking a workspace thumbnail
+- [ ] Same when a notification pulls focus to a window on another workspace
+- [ ] Same after `wmctrl -s 2` from a terminal
+- [ ] Reassignment does not re-trigger itself — no loop, no runaway window movement
 
 ---
 
-## Phase 8 — Testing & QA
+## Phase 9 — Testing & QA
 
 **Goal:** Repeatable, documented test suite covering unit and integration scenarios.
 
@@ -333,7 +443,7 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
 
 ---
 
-## Phase 9 — Packaging & Distribution
+## Phase 10 — Packaging & Distribution
 
 **Goal:** Package for GNOME Extensions (EGO) submission and direct install.
 
@@ -363,6 +473,10 @@ layouts internally, which is why Phase 5 only has to *verify* those cases.
 | Ubuntu Canonical patches alter `MonitorGroup` behavior | Low | High | Test on stock Ubuntu 24.04, not only upstream |
 | Another extension also overrides `switch-to-workspace-*` keybindings | Medium | Medium | Detect a non-stock handler at enable time; log and skip the keyboard phase rather than clobbering |
 | Conflict with another extension patching the same methods | Medium | Medium | Detect conflict at enable time; log clear warning |
+| External workspace change desyncs `V[m]` from screen, compounding on each swipe | **High** until Phase 8 | **High** | `syncOnExternalSwitch` (Phase 8) reconciles on the Shell's own `switch-workspace` signal; until then, detect and log |
+| Reassignment strands or loses windows if the Shell dies mid-sync | Low | **High** | `restoreAll()` on disable; never move primary-monitor windows; refuse to run under dynamic workspaces |
+| Overview / switcher / alt-tab disagree with what the user sees | High | Low | Inherent to reassignment; documented in the README as accepted divergence, not a defect |
+| Another extension also moves windows between workspaces | Medium | Medium | `WindowTracker` follows `workspace-changed` and updates its record rather than fighting the other extension |
 | EGO review rejects internal API usage | Medium | Medium | Document rationale; provide full source |
 | Wayland coordinate differences from X11 | Low | Low | Wayland-first design; X11 is best-effort |
 
@@ -382,6 +496,8 @@ macos-workspaces@macosworkspaces.dev/
 │   ├── cursorMonitor.js
 │   ├── gestureHandler.js
 │   ├── keybindingHandler.js
+│   ├── windowTracker.js
+│   ├── workspaceReassigner.js
 │   ├── animationDriver.js
 │   └── settings.js
 ├── schemas/
@@ -393,6 +509,7 @@ macos-workspaces@macosworkspaces.dev/
 │   ├── cursorMonitor.test.js
 │   ├── gestureHandler.test.js
 │   ├── keybindingHandler.test.js
+│   ├── windowTracker.test.js
 │   ├── settings.test.js
 │   └── integration/
 │       └── playbook.md

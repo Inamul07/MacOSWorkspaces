@@ -8,9 +8,10 @@ With GNOME's **Workspaces on All Displays** enabled, a three-finger swipe moves
 gesture, works out which display the cursor is on, and slides only that display —
 leaving the others exactly where they were.
 
-> **Status: Phase 2 — state engine.** The extension tracks an independent
-> workspace index per monitor but does not yet act on it. Gesture interception
-> lands in Phase 3, keyboard switching in Phase 4.
+> **Status: Phase 3 — gesture interception.** A swipe now moves only the monitor
+> it started on. The new workspace does not yet *persist* on a secondary monitor —
+> it animates and snaps back — because GNOME has a single global workspace.
+> Persistence is Phase 5; keyboard switching is Phase 4.
 > See [plan.md](plan.md) for the full roadmap.
 
 ---
@@ -112,9 +113,9 @@ A healthy enable/disable cycle prints exactly two lines and no warnings:
 
 ```
 extension.js   Shell-side entry point (enable / disable lifecycle)
-prefs.js       Adw.PreferencesWindow — stub until Phase 6
+prefs.js       Adw.PreferencesWindow — stub until Phase 7
 metadata.json  UUID, target shell-version, settings-schema id
-schemas/       GSettings schema; keys are defined in Phase 6
+schemas/       GSettings schema; keys are defined in Phase 7
 scripts/       Developer tooling, not shipped to users
 plan.md        Phase-by-phase implementation plan
 AGENTS.md      Authoritative reference for agents working on this codebase
@@ -138,4 +139,4 @@ extension disables itself rather than breaking your session.
 
 ## License
 
-GPL-2.0-or-later. See `LICENSE` (added in Phase 9).
+GPL-2.0-or-later. See `LICENSE` (added in Phase 10).

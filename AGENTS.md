@@ -401,22 +401,31 @@ Execute inside a nested Wayland session (`./scripts/dev-session.sh`):
 - [ ] After `disable`: global keyboard switching restored
 - [ ] `move-to-workspace-*` unchanged from stock
 
-#### Phase 5 — Animation Quality
+#### Phase 5 — Per-Monitor Persistence
+- [ ] Secondary monitor shows its own workspace and stays there
+- [ ] Primary monitor's windows never change workspace
+- [ ] Sticky windows visible on both monitors
+- [ ] `disable()` returns every window to its original workspace
+- [ ] Persistence refuses to run under dynamic workspaces, with a warning
+
+#### Phase 6 — Animation Quality
 - [ ] Slide animation speed and easing match native GNOME workspace switch
 - [ ] Interrupting a gesture mid-animation does not crash the Shell
 - [ ] Sticky windows (on all workspaces) remain visible on all monitors
 
-#### Phase 6 — Settings
+#### Phase 7 — Settings
 - [ ] Each settings change takes effect immediately (no restart needed)
 - [ ] `wrap-around: true` enables circular navigation
 - [ ] `sync-primary-workspace: false` decouples primary monitor from global workspace
 
-#### Phase 7 — Robustness
+#### Phase 8 — Robustness
 - [ ] Connect a monitor mid-session: managed immediately
 - [ ] Disconnect a monitor mid-session: no crash
 - [ ] Lock/unlock screen cycle: normal behavior
 - [ ] Open Overview during a swipe: gesture cancelled cleanly
 - [ ] Toggle "Workspaces on all displays" in GNOME Settings while active: no crash
+- [ ] Secondary holds its workspace when the global one changes externally (keyboard, Overview, `wmctrl`)
+- [ ] Reassignment does not re-trigger itself
 - [ ] Disable → enable × 10: no memory growth in Looking Glass
 
 ### Lint & Schema
@@ -441,7 +450,7 @@ The extension runs entirely within the GJS sandbox of the GNOME Shell process. I
 - Request D-Bus system bus services that require elevated permissions
 
 ### GSettings Schema Safety
-- The schema must declare only the keys documented in `plan.md § Phase 6`.
+- The schema must declare only the keys documented in `plan.md § Phase 7`.
 - New settings keys must never expose raw JavaScript evaluation, shell command strings, or file paths from user input.
 
 ### Interception Scope
