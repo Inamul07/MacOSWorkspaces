@@ -31,9 +31,15 @@ libinput ──▶ Mutter ──▶ Clutter TOUCHPAD_SWIPE event      keybinding
               └────────────────┬─────────────────┘
                                │
               ┌────────────────▼─────────────────┐
-              │  Per-monitor state map            │
-              │  monitorIndex → virtualWorkspace  │
-              └───────────────────────────────────┘
+              │  AnimationDriver (Phase 6)        │  ◀── one slide, both inputs
+              │  stage → anchor → ease → settle   │
+              └────────┬───────────────┬─────────┘
+                       │               │
+   ┌───────────────────▼──┐  ┌─────────▼─────────────────────┐
+   │  Per-monitor state    │  │  WorkspaceReassigner (Phase 5) │
+   │  monitor → virtual ws │  │  parks windows so a secondary  │
+   └───────────────────────┘  │  really shows its own workspace│
+                              └────────────────────────────────┘
 ```
 
 Key GNOME Shell internal objects (stable in GNOME 46):
@@ -327,10 +333,13 @@ it in the README rather than pretending it is a bug to fix.
 > workspaces the user cannot reach. Worth logging a warning on detected desync
 > during this phase even though the fix arrives later.
 
-### Manual Verification Checklist
-- [ ] Swipe on the secondary: it shows a different set of windows and **stays** there
-- [ ] The primary monitor's windows never change workspace
-- [ ] Swiping on the primary no longer drags the secondary's contents with it
+### Manual Verification Checklist — core behaviour ✅, edge cases carried forward
+Verified on real hardware (LVDS-1 primary + VGA-1 Dell, GNOME Shell 46.0,
+`dynamic-workspaces=false`, `num-workspaces=4`).
+
+- [x] Swipe on the secondary: it shows a different set of windows and **stays** there
+- [x] The primary monitor's windows never change workspace
+- [x] Swiping on the primary no longer drags the secondary's contents with it — **fixed twice.** See *Two rejected designs* below.
 - [ ] A window opened on the secondary while it shows virtual workspace 2 is still there after switching away and back
 - [ ] Sticky (on-all-workspaces) windows stay visible on both monitors throughout
 - [ ] Moving a window between workspaces by hand updates the record instead of being undone
@@ -338,35 +347,113 @@ it in the README rather than pretending it is a bug to fix.
 - [ ] With `dynamic-workspaces=true`, persistence stays off and logs a clear warning
 - [ ] Fullscreen window on the secondary does not strand or lose the window
 
+> The five unticked items are **not** blockers on the mechanism — each is guarded
+> in code (sticky and desktop windows are refused by `isTrackableWindow`,
+> `restoreAll()` runs from `destroy()`, `dynamic-workspaces` is checked at
+> `enable()`) and covered by unit tests, but none has been exercised by hand on
+> hardware. They move to the Phase 9 integration playbook rather than being
+> claimed here.
+
+### Two rejected designs, and why the third works
+
+1. **Rotate the whole ring.** `shellFromVirtual` wraps modularly, so a secondary
+   at global workspace 0 has no left neighbour to slide onto: windows landed on
+   workspace 4 and the monitor could not move left again. Rejected on hardware.
+2. **Pin the displayed workspace.** Holding `G` still for the primary and
+   rotating everything else. Rejected outright by the user as unusable.
+3. **Staging** (shipped). During a switch the `MonitorGroup` covers the monitor
+   with clones, so the group need not sit at `G` at all. The monitor's windows
+   are re-parked around a central staging index that always has both neighbours,
+   the group slides one step, and `syncMonitor()` parks back to rest before the
+   clones are torn down.
+
+> **The `syncAll` invariant.** Every monitor renders whatever sits on the active
+> workspace, so the moment the *primary* activates a new one, every secondary is
+> parked against a workspace that is no longer displayed and is dragged along.
+> The primary path must therefore call `syncAll(newIndex)` on settle, with the
+> index passed **explicitly** rather than read back after `activate()`. Dropping
+> that call is what made "moving the laptop moves the Dell too" reappear.
+
 ---
 
 ## Phase 6 — Animation & Visual Polish
 
-**Goal:** Make per-monitor animation visually match GNOME's native slide quality and feel.
+**Goal:** One animation path for both inputs, correct under interruption, and
+matching GNOME's native slide.
 
 ### Deliverables
-- `lib/animationDriver.js` — `AnimationDriver` class
-  - Wraps `MonitorGroup.ease_property('progress', ...)` with `EASE_OUT_CUBIC` curve and duration constants matching stock `_switchWorkspaceEnd`
-  - Handles gesture interruption: if a second swipe begins before the first animation completes, snaps the in-progress animation then starts cleanly
-  - Note on teardown: `environment.js:61-66` calls `onComplete` only when a
-    transition finishes naturally, so any teardown hung off it is skipped when
-    `remove_all_transitions()` interrupts the ease. Stock GNOME uses the same
-    pattern and relies on the interrupting gesture's own `end` to finish the
-    switch, which holds because `SwipeTracker` emits `end` even on cancel. If the
-    driver ever moves teardown out of that chain it must use `onStopped`, which
-    always fires.
-- Sticky-window groups (windows on all workspaces) remain visible on all monitors throughout any transition — the Shell builds these itself in `_prepareWorkspaceSwitch()`, so this is a *verification* item, not something we construct
-- **Verify** right-to-left locales behave correctly. `MonitorGroup` already handles RTL internally (`workspaceAnimation.js:204, 244, 253, 274, 412`) and so does `swipeTracker.js:660`, so this is inherited for free *provided Phase 3 drives the Shell's progress math instead of computing its own*. Only if that assumption breaks does this become implementation work.
-- **Verify** vertical workspace layouts (`workspace_manager.layout_rows === -1`). Stock `_switchWorkspaceBegin` already sets `tracker.orientation` from this; our `_onBegin` must preserve that logic.
+- `lib/animationDriver.js` — `AnimationDriver`, now the only place a slide is
+  driven. The gesture and keyboard handlers were each doing their own staging,
+  anchoring and easing, and had already diverged once (Phase 4's backwards
+  slide). What is left in each handler is the input itself.
+  - **Sessions with a frozen anchor.** `beginSwitch()` records where the slide
+    started — both the real workspace index and the monitor's virtual one — and
+    every later calculation measures against those. This is what fixes
+    interruption: a second swipe mid-settle reuses the actors on screen (the
+    clones were built from the staged layout, so re-staging would leave them
+    showing windows that have since moved), and the previous `settle()` has
+    already written a new virtual index. Measuring against *that* counted the
+    first switch twice — staged at 1 with `V=0`, two rightward flicks landed on
+    virtual workspace 3 instead of 2.
+  - Interruption on a *different* monitor closes the first switch out — snapping
+    it to its target and un-staging it — rather than interleaving two switches
+    through one shared `_switchData`.
+  - Settles on `onStopped` rather than `onComplete`. `onComplete` fires only on a
+    natural finish (`environment.js:61-66`), and the Shell tears a
+    gesture-activated switch down outright when the Overview opens
+    (`workspaceAnimation.js:322`), destroying the groups mid-ease. Under
+    `onComplete` that stranded the monitor's windows on the staging workspaces
+    with nothing on screen to explain where they went.
+  - Un-stages on every bail-out path, for the same reason.
+- `EASE_OUT_CUBIC` and `WINDOW_ANIMATION_TIME` (250ms) for both paths, matching
+  stock `_switchWorkspaceEnd`; a gesture passes its own duration through, as the
+  Shell does.
+- Sticky-window groups remain visible on all monitors throughout — the Shell
+  builds these itself in `_prepareWorkspaceSwitch()`, so this is a *verification*
+  item, not something we construct.
+- **Right-to-left.** The gesture path is inherited: `MonitorGroup.progress`,
+  `getWorkspaceProgress()`, `getSnapPoints()` and `findClosestWorkspace()` each
+  handle RTL internally (`workspaceAnimation.js:244, 253, 274`), and Phase 3
+  drives those rather than computing progress itself. The keyboard path does
+  index arithmetic instead of asking for a neighbour, so it flips left/right
+  itself — mutter lays the workspace strip out right-to-left under RTL, which is
+  why stock `_showWorkspaceSwitcher` needs no flip of its own and we do.
+- **Vertical and grid layouts.** `_onBegin` sets the tracker's orientation from
+  `layout_rows`, as stock does. The keyboard path now also honours the Shell's
+  own axis guard (`windowManager.js:637-645`): a row of workspaces ignores up and
+  down, a column ignores left and right. Without it the extension moved
+  workspaces on keys the user's desktop otherwise ignores.
+- `shellInterop.getWorkspaceLayout()` — exposes `layout_rows`/`layout_columns`
+  for that guard. `findMonitorGroup()` now returns null instead of throwing when
+  no switch is in flight; `_findMonitorGroup` dereferences `_switchData`
+  unguarded.
+- `monitorState.clampIndex()` — non-mutating, so a keystroke at either end of the
+  strip is recognised as a no-op *before* any windows are staged.
 
-> **Removed from this phase:** the original plan listed "`WorkspaceBackground` actors created/destroyed per virtual workspace change". `WorkspaceBackground` lives in `workspace.js:943` and is an **Overview** actor — it takes no part in the workspace switch animation, which uses `WorkspaceGroup` and `MonitorGroup`. There is nothing to do here.
+> **Removed from this phase:** the original plan listed "`WorkspaceBackground`
+> actors created/destroyed per virtual workspace change". `WorkspaceBackground`
+> lives in `workspace.js:943` and is an **Overview** actor — it takes no part in
+> the workspace switch animation, which uses `WorkspaceGroup` and `MonitorGroup`.
+> There is nothing to do here.
+
+### Automated coverage
+136 checks, all passing: 36 driver, 38 keyboard, 18 gesture, 17 persistence,
+8 tracker (`gjs`), 19 state (Node). ESLint clean.
 
 ### Manual Verification Checklist
 - [ ] Slide animation on the active monitor is smooth and matches native feel
 - [ ] No visual glitches or flicker on inactive monitors during a transition
+- [ ] **No flicker at the *start* of a secondary swipe** — staging re-parks the
+      windows in the same callback that builds the clones, so no frame should be
+      drawn in between. A flicker here means that assumption is wrong
+- [ ] A second swipe during the settle animation lands one workspace further, not two
+- [ ] Swiping monitor A while monitor B is still settling leaves B where it was heading
+- [ ] Opening the Overview mid-animation leaves no window stranded on a staging workspace
+- [ ] Keyboard and swipe animations are indistinguishable
 - [ ] Sticky (pinned) windows appear correctly on all monitors throughout
 - [ ] Swipe direction is correct with a right-to-left locale active
-- [ ] Vertical workspace layout (4-finger swipe up/down if configured) works correctly
+- [ ] With the default single-row layout, `Ctrl`+`Alt`+`Up`/`Down` do nothing (as in stock GNOME)
+- [ ] Vertical workspace layout: up/down switch, left/right do nothing
 
 ---
 
@@ -496,6 +583,7 @@ it in the README rather than pretending it is a bug to fix.
 | External workspace change desyncs `V[m]` from screen, compounding on each swipe | **High** until Phase 8 | **High** | `syncOnExternalSwitch` (Phase 8) reconciles on the Shell's own `switch-workspace` signal; until then, detect and log |
 | Another per-monitor workspace extension runs alongside ours (e.g. Smart Workspace Manager) | Medium | **High** | Both move/animate workspaces and corrupt each other's model; SWM's delayed window moves race the Shell's animation and throw `record is undefined` from `_syncStacking`. Detect known-conflicting UUIDs at enable time and warn |
 | Reassignment strands or loses windows if the Shell dies mid-sync | Low | **High** | `restoreAll()` on disable; never move primary-monitor windows; refuse to run under dynamic workspaces |
+| The Shell tears a switch down mid-animation, leaving windows staged | Medium | **High** | Handled in Phase 6: the Overview does exactly this (`workspaceAnimation.js:322`), so the driver settles from `onStopped`, which fires on interruption too, and un-stages on every bail-out path |
 | Overview / switcher / alt-tab disagree with what the user sees | High | Low | Inherent to reassignment; documented in the README as accepted divergence, not a defect |
 | Another extension also moves windows between workspaces | Medium | Medium | `WindowTracker` follows `workspace-changed` and updates its record rather than fighting the other extension |
 | EGO review rejects internal API usage | Medium | Medium | Document rationale; provide full source |
@@ -528,6 +616,7 @@ macos-workspaces@macosworkspaces.dev/
 │   ├── stubs.js
 │   ├── monitorState.test.js
 │   ├── cursorMonitor.test.js
+│   ├── animationDriver.test.js
 │   ├── gestureHandler.test.js
 │   ├── keybindingHandler.test.js
 │   ├── windowTracker.test.js

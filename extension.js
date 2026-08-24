@@ -6,6 +6,7 @@
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+import {AnimationDriver} from './lib/animationDriver.js';
 import {getCursorMonitorIndex} from './lib/cursorMonitor.js';
 import {GestureHandler} from './lib/gestureHandler.js';
 import {KeybindingHandler} from './lib/keybindingHandler.js';
@@ -17,9 +18,10 @@ import {WorkspaceReassigner} from './lib/workspaceReassigner.js';
 /**
  * Entry point for the MacOS Workspaces extension.
  *
- * As of Phase 5 a secondary monitor keeps its own workspace: both input paths
- * are per-monitor, and the windows underneath are rotated so the monitor really
- * shows the workspace it claims to.
+ * As of Phase 6 a secondary monitor keeps its own workspace: both input paths
+ * are per-monitor, the windows underneath are rotated so the monitor really
+ * shows the workspace it claims to, and both paths run through one shared
+ * animation driver so they cannot look — or count — differently.
  */
 export default class MacOSWorkspacesExtension extends Extension {
     /**
@@ -65,15 +67,22 @@ export default class MacOSWorkspacesExtension extends Extension {
             this._startPersistence();
         }
 
-        this._gestureHandler = new GestureHandler({
+        // One driver, shared: a swipe and a keystroke are the same switch seen
+        // through different inputs, and the two diverged once already.
+        this._driver = new AnimationDriver({
             interop: this._interop,
             monitorState: this._monitorState,
             reassigner: this._reassigner,
         });
+
+        this._gestureHandler = new GestureHandler({
+            interop: this._interop,
+            driver: this._driver,
+        });
         this._keybindingHandler = new KeybindingHandler({
             interop: this._interop,
             monitorState: this._monitorState,
-            reassigner: this._reassigner,
+            driver: this._driver,
         });
 
         console.log(`[macos-workspaces] enabled (v${this.metadata['version-name']}) — ` +
@@ -109,6 +118,11 @@ export default class MacOSWorkspacesExtension extends Extension {
 
         this._gestureHandler?.destroy();
         this._gestureHandler = null;
+
+        // Close any switch still animating: it un-stages the windows, so the
+        // restore below has them where the records expect them.
+        this._driver?.destroy();
+        this._driver = null;
 
         // Put every window back on its own workspace before the records that say
         // where that is are thrown away.

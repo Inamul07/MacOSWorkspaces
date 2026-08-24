@@ -40,10 +40,31 @@ When GNOME is configured with "Workspaces on All Displays" (`org.gnome.mutter wo
 | `Main.wm.setCustomKeybindingHandler()` | `js/ui/windowManager.js:1095` | Keyboard interception point (Phase 4) |
 | `Main.wm._showWorkspaceSwitcher` | `js/ui/windowManager.js:560-596` | Stock keybinding handler; restore target on disable |
 | `MonitorGroup` | `js/ui/workspaceAnimation.js` | Per-physical-monitor slide actor; `.progress` drives animation |
+| `wac._findMonitorGroup()` | `js/ui/workspaceAnimation.js:448` | Dereferences `_switchData` unguarded — **throws** when no switch is in flight, so guard before calling |
+| `Main.overview` `showing` handler | `js/ui/workspaceAnimation.js:322` | Tears down a gesture-activated switch outright; our ease must settle from `onStopped`, not `onComplete` |
+| `workspaceManager.layout_rows` / `layout_columns` | Mutter GObject | `-1` means unbounded on that axis; the Shell uses both to decide which arrow keys a layout answers (`windowManager.js:637-645`) |
 | `global.workspace_manager` | Mutter GObject | Logical workspace creation/activation |
 | `global.display.get_monitor_index_for_rect()` | Mutter | Maps cursor coordinates to monitor index |
 
 > ⚠️ **Internal API Warning:** All APIs above are GNOME Shell internals with no stability guarantee. They are verified correct for GNOME 46. The version-guard shim in `lib/shellInterop.js` must check for their existence and disable the extension gracefully if they are absent or renamed.
+
+---
+
+### Reading the Shell's own source
+The GNOME 46 JS is **not** on disk and **not** in any `/usr/share/gnome-shell/*.gresource`.
+It is linked into `libshell-14.so`:
+
+```bash
+ssh UbuntuHP 'mkdir -p /tmp/gs-src && cd /tmp/gs-src && \
+  gresource extract /usr/lib/gnome-shell/libshell-14.so \
+    /org/gnome/shell/ui/workspaceAnimation.js > workspaceAnimation.js'
+```
+
+`gresource list /usr/bin/gnome-shell` says `Can't find resource section`, and
+`/usr/lib/gnome-shell/libgnome-shell.so` does not exist on Ubuntu 24.04 — neither
+means the source is unavailable. Check assumptions about Shell behaviour against
+this rather than against memory; three separate bugs in this project came from
+guessing what stock GNOME does.
 
 ---
 
@@ -410,8 +431,13 @@ Execute inside a nested Wayland session (`./scripts/dev-session.sh`):
 
 #### Phase 6 — Animation Quality
 - [ ] Slide animation speed and easing match native GNOME workspace switch
+- [ ] No flicker at the **start** of a secondary swipe (staging must be invisible)
+- [ ] A second swipe during the settle lands one workspace further, not two
+- [ ] Swiping monitor A while B is still settling leaves B where it was heading
+- [ ] Opening the Overview mid-animation strands no window on a staging workspace
 - [ ] Interrupting a gesture mid-animation does not crash the Shell
 - [ ] Sticky windows (on all workspaces) remain visible on all monitors
+- [ ] With the default single-row layout, `Ctrl`+`Alt`+`Up`/`Down` do nothing, as in stock GNOME
 
 #### Phase 7 — Settings
 - [ ] Each settings change takes effect immediately (no restart needed)
