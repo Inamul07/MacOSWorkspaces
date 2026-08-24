@@ -50,6 +50,38 @@ When GNOME is configured with "Workspaces on All Displays" (`org.gnome.mutter wo
 
 ---
 
+### Driving the robustness checks
+The external-change paths need no touchpad and no re-login beyond installing:
+
+```bash
+ssh UbuntuHP 'export XDG_RUNTIME_DIR=/run/user/1000
+  gsettings set org.gnome.desktop.wm.preferences num-workspaces 2   # loses room
+  gsettings set org.gnome.mutter dynamic-workspaces true            # unsafe
+  gsettings set org.gnome.mutter workspaces-only-on-primary true'   # meaningless
+```
+
+Put every one of them back afterwards — `num-workspaces 4`,
+`dynamic-workspaces false`, `workspaces-only-on-primary false` — or the next
+session starts with persistence refusing to run and no obvious reason why.
+Watch `journalctl -f -o cat /usr/bin/gnome-shell` for `per-monitor persistence off`.
+
+Persistence stays off until the extension is re-enabled, so recycle it between
+tests: `gnome-extensions disable … && gnome-extensions enable …`. That reruns
+`enable()` but does **not** reload changed `lib/` code — module imports are
+cached, so code changes still need a re-login.
+
+A monitor hotplug is real, not simulated — `ApplyMonitorsConfig` over
+`org.gnome.Mutter.DisplayConfig` (see the Phase 2 script). Open a window or two
+first, or the re-attribution log reads `0` and means nothing.
+
+**An external workspace switch cannot be triggered from a script.** `wmctrl` and
+`xdotool` are not installed and need root; an EWMH `_NET_CURRENT_DESKTOP` client
+message to the XWayland root is accepted by the X server and ignored by mutter,
+which under Wayland takes no workspace changes from X clients. Ask the user to
+click an Overview thumbnail or press `Super`+`2`.
+
+---
+
 ### Checking the preferences window
 `prefs.js` runs in its own process, so a change to it is testable **without a
 re-login** — unlike anything under `lib/`. Launch it against the live session and
@@ -469,14 +501,23 @@ Execute inside a nested Wayland session (`./scripts/dev-session.sh`):
 > plan.md for why. Do not re-add them without re-reading that section.
 
 #### Phase 8 — Robustness
-- [ ] Connect a monitor mid-session: managed immediately
-- [ ] Disconnect a monitor mid-session: no crash
-- [ ] Lock/unlock screen cycle: normal behavior
-- [ ] Open Overview during a swipe: gesture cancelled cleanly
-- [ ] Toggle "Workspaces on all displays" in GNOME Settings while active: no crash
-- [ ] Secondary holds its workspace when the global one changes externally (keyboard, Overview, `wmctrl`)
-- [ ] Reassignment does not re-trigger itself
+- [ ] Secondary holds its workspace when the global one changes externally (`wmctrl -s 2`, Overview thumbnail, `Super`+`2`)
+- [ ] Reassignment does not re-trigger itself — no loop, no runaway window movement
+- [ ] Lock/unlock: each monitor comes back on the workspace it was showing
+- [ ] Connect a monitor mid-session: managed immediately, no stranded windows
+- [ ] Disconnect a monitor mid-session: no crash; its windows re-attributed to the survivor
+- [ ] `num-workspaces` set to 2 while running: persistence stops, every window comes back
+- [ ] `dynamic-workspaces` turned on while running: same
+- [ ] "Workspaces on all displays" toggled while active: same, no crash
+- [ ] `smart-workspace-manager@local` enabled alongside: the journal names it and says why
+- [ ] Open Overview during a swipe: gesture cancelled cleanly (Phase 6)
 - [ ] Disable → enable × 10: no memory growth in Looking Glass
+
+> **Reconciliation has no suppression flag.** The watcher tells our own workspace
+> changes from external ones by comparing the primary monitor's recorded index
+> against the real active workspace: agreement means it was us. Do not add a flag
+> — it was rejected deliberately, and `settle()` writing the index before
+> `activate()` fires is what makes the comparison sound.
 
 ### Lint & Schema
 ```bash

@@ -542,44 +542,128 @@ adds to it. Caught by the Phase 6 interruption test, which is why it was written
 
 ## Phase 8 — Edge Cases & Robustness
 
-**Goal:** Harden the extension against real-world runtime scenarios and lifecycle events.
+**Goal:** Stay correct when the world changes without going through this extension.
 
 ### Deliverables
-- **`syncOnExternalSwitch`** — reconcile after any workspace change the extension
-  did not cause. Added to `workspaceReassigner.js`:
-  - Connect to the Shell's `switch-workspace` signal (`windowManager.js:529`), or
-    `workspace_manager::notify::active-workspace`
-  - When the global workspace changes and it was not our own gesture or keybinding:
-    set the primary monitor's virtual index to the new global workspace, then
-    re-run `syncMonitor()` for every secondary so each keeps showing its own index
-  - **Must ignore its own `change_workspace()` calls**, or reassignment re-triggers
-    the handler and loops. Reuse the suppression flag `WorkspaceReassigner` already
-    needs for `WindowTracker`.
-  - Covers every input path interception cannot reach: Overview thumbnail clicks,
-    a notification pulling focus to another workspace, `wmctrl -s`, other
-    extensions, `switch-to-workspace-1…12` and `-last` (Phase 4 only overrides the
-    four directional bindings), and any path added by a future GNOME release
-- Monitor hotplug/unplug mid-session — no crash; state added/removed cleanly
-- Workspace creation/deletion via keyboard shortcuts or other extensions — indices clamped
-- Overview open/close — swipe tracker disabled when Overview is showing; re-enabled on hide
-- Lock screen transitions — all patches inactive during the locked state
-- `gnome-shell --replace` / extension reload — no session restart required
-- `workspaces-only-on-primary` runtime toggle — graceful deactivation of per-monitor logic
-- Rapid enable/disable cycling — no memory leaks (verified in GNOME Looking Glass)
-- Version-guard shim — logs clear warning and disables gracefully if patched methods are absent/renamed
+- `lib/externalWatcher.js` — `ExternalChangeWatcher`. Delivers
+  `syncOnExternalSwitch` and the rest of the reconciliation. Placed in its own
+  module rather than inside `workspaceReassigner.js` as first planned: the
+  reassigner moves windows, and giving it signal wiring and lifecycle as well
+  would have made the one class that can strand windows the hardest to reason
+  about.
+
+  **No suppression flag.** The obvious design ignores workspace changes the
+  extension caused, which needs a flag held across an asynchronous animation and
+  is a re-entrancy bug waiting to happen — the original plan called this out as
+  something that "re-triggers the handler and loops". This compares instead: the
+  primary monitor's recorded index *is* what the extension believes the real
+  workspace to be, so a change that **agrees** with it came from us and needs
+  nothing, and a change that **disagrees** came from somewhere else. Verified:
+  `settle()` writes the index before `activate()` fires the signal, so the model
+  always already agrees by the time we hear about our own switch. Self-correcting
+  and impossible to loop.
+
+  It watches four things:
+  - `workspace_manager::notify::active-workspace` — re-anchors the primary and
+    re-parks every secondary. Covers Overview thumbnail clicks, a notification
+    pulling focus, `wmctrl -s`, `switch-to-workspace-1` … `-12` and `-last`
+    (Phase 4 only overrides the four directional bindings), other extensions,
+    and any path a future GNOME adds. Stands back while one of our own switches
+    is still animating, since its settle does this itself.
+  - `notify::n-workspaces` — turns persistence off, restoring every window, when
+    the count drops below the four that staging needs; otherwise re-syncs,
+    because `MonitorStateManager` may have clamped the surviving indices.
+  - `monitors-changed` — monitor indices are positional, so a hotplug renumbers
+    the displays and every window record names the wrong one. Rebuilds
+    attribution via `WindowTracker.retrackAll()` and resets every display to the
+    workspace actually on screen, which is the only honest starting point.
+  - `org.gnome.mutter` `dynamic-workspaces` and `workspaces-only-on-primary` —
+    either turning on makes persistence unsafe or meaningless, so it stops and
+    puts every window back. `Meta.prefs_get_*` reads these but offers GJS no
+    change notification, so the settings are watched directly.
+- `lib/windowTracker.js` — `retrackAll()`. Preserves each window's virtual
+  workspace where its monitor survived, and resets it where the window landed on
+  a different display, because a window that has moved displays belongs to what
+  that display is showing.
+- **Conflict detection** — `findConflicts()`, a plain function over UUIDs so it
+  is testable (GJS makes `console.warn` non-configurable, so a test cannot
+  capture a log line). Currently names `smart-workspace-manager@local`, which
+  describes itself as keeping "workspace independence per monitor" by shifting
+  windows — the same job, and the source of the `record is undefined` exceptions
+  wrongly blamed on this extension during Phase 5. Extend the list as conflicts
+  are observed; the behavioural check on the SwipeTracker's handler count from
+  Phase 3 catches the rest.
+- **State across the lock screen** — `session-modes: ["user"]` means GNOME calls
+  `disable()` on lock and `enable()` on unlock. Without help, every lock silently
+  collapses all displays onto one workspace, which reads as a bug rather than a
+  lifecycle event. `disable()` now remembers the indices and `enable()` restores
+  them, but **only after the window tracker is built**: the tracker works out
+  where each window belongs by measuring it against what its monitor is showing,
+  so it has to do that while the rotation is still the identity. Discards the
+  saved state when the display or workspace count changed while locked.
+
+### Already covered, and why nothing was added
+- **Overview during a gesture** — handled in Phase 6 by settling from
+  `onStopped`. The Shell disables the swipe tracker on `showing` and re-enables
+  it on `hiding` from its own constructor (`workspaceAnimation.js:325-334`),
+  which this extension never touches, so that continues to work.
+- **Lock screen** — `session-modes: ["user"]` already means every patch is
+  inactive while locked. Nothing to add beyond preserving state across it.
+- **Version guard** — `checkCompatibility()` since Phase 3.
+
+### Automated coverage
+196 checks, all passing: 45 driver, 42 keyboard, 25 watcher, 20 persistence,
+18 gesture, 14 tracker, 12 settings (`gjs`), 20 state (Node). ESLint clean.
+
+### One claim retracted
+A hotplug test logged `re-attributed 0 window(s)`, which was read as
+re-attribution dropping every window and led to `monitors-changed` being
+deferred. Re-running it with two windows actually open gave
+`re-attributed 2 window(s)`: the zero meant nothing had been tracked, because no
+applications were running. **The bug was not real.** The deferral was kept — it
+coalesces the several `monitors-changed` mutter emits while settling, and costs
+an idle tick — but on that basis, not on evidence of loss. `retrackAll()` now
+reports how many records it lost, so if the ordering assumption ever does break
+it says so instead of going quiet.
 
 ### Manual Verification Checklist
-- [ ] Plug in a second monitor mid-session: extension detects and manages it immediately
-- [ ] Unplug a monitor mid-session: no crash; state entry removed
-- [ ] Open the Overview during a gesture: gesture cancelled gracefully, no stuck animation
-- [ ] Lock and unlock the screen: normal behavior on both sides of the lock
-- [ ] Enable/disable 10 times: no memory growth visible in Looking Glass
-- [ ] Toggle "Workspaces on all displays" in GNOME Settings while extension is active: no crash
-- [ ] Secondary monitor holds its own workspace when the global one changes via `Ctrl`+`Alt`+arrow
-- [ ] Same when switching from the Overview by clicking a workspace thumbnail
-- [ ] Same when a notification pulls focus to a window on another workspace
-- [ ] Same after `wmctrl -s 2` from a terminal
-- [ ] Reassignment does not re-trigger itself — no loop, no runaway window movement
+Run on the target session over SSH; the three settings and the extension list
+were captured before each test and restored afterwards, and the restoration
+verified.
+
+- [x] The four watched keys exist on the target
+- [x] Unplug a monitor mid-session: no crash; **`re-attributed 2 window(s)`** with
+      both windows kept. Driven by a genuine `ApplyMonitorsConfig`, not a fake signal
+- [x] Plug it back in mid-session: managed immediately, no stranded windows
+- [x] Set `num-workspaces` to 2 while running: `per-monitor persistence off —
+      there are no longer at least 4 workspaces. Every window has been put back.`
+- [x] Turn on `dynamic-workspaces` while running: same, naming that cause
+- [x] Turn on "Workspaces on all displays" while running: same, naming that cause
+- [x] Enable `smart-workspace-manager@local` alongside: the journal names it and
+      says why. Its `enable()` only connects signals, so the exposure was seconds
+      with no workspace switch
+- [x] Enable/disable 10 times: no JS error and no warning from this extension.
+      Each cycle logs a full teardown — watcher stopped, keybindings restored,
+      gesture handlers restored, tracking stopped, state destroyed — and the
+      Phase 3 handler-count check never fired, so exactly one stock handler was
+      found on the tracker every time
+- [x] Existing windows are tracked at `enable()`, not only newly created ones
+      (`tracking 2 windows` on a mid-session re-enable)
+- [ ] Secondary holds its own workspace when the global one changes externally.
+      **Could not be driven remotely** — see below. Needs an Overview thumbnail
+      click or `Super`+`2`
+- [ ] Reassignment does not re-trigger itself — same test
+- [ ] Lock and unlock: each monitor comes back on the workspace it was showing.
+      The restore path runs and logs on every re-enable, but only ever with all
+      indices at 0, so preservation of a *non-zero* index is still unproven
+- [ ] Memory growth across cycles, in Looking Glass
+
+> **Triggering an external workspace switch is not possible from a script.**
+> `wmctrl` and `xdotool` are absent and installing them needs root; an EWMH
+> `_NET_CURRENT_DESKTOP` client message sent to the XWayland root is accepted by
+> the X server and then ignored by mutter, which under Wayland does not take
+> workspace changes from X clients. Input injection was already ruled out in
+> Phase 2. This one needs a human.
 
 ---
 
@@ -640,8 +724,8 @@ adds to it. Caught by the Phase 6 interruption test, which is why it was written
 | Ubuntu Canonical patches alter `MonitorGroup` behavior | Low | High | Test on stock Ubuntu 24.04, not only upstream |
 | Another extension also overrides `switch-to-workspace-*` keybindings | Medium | Medium | Detect a non-stock handler at enable time; log and skip the keyboard phase rather than clobbering |
 | Conflict with another extension patching the same methods | Medium | Medium | Detect conflict at enable time; log clear warning |
-| External workspace change desyncs `V[m]` from screen, compounding on each swipe | **High** until Phase 8 | **High** | `syncOnExternalSwitch` (Phase 8) reconciles on the Shell's own `switch-workspace` signal; until then, detect and log |
-| Another per-monitor workspace extension runs alongside ours (e.g. Smart Workspace Manager) | Medium | **High** | Both move/animate workspaces and corrupt each other's model; SWM's delayed window moves race the Shell's animation and throw `record is undefined` from `_syncStacking`. Detect known-conflicting UUIDs at enable time and warn |
+| External workspace change desyncs `V[m]` from screen, compounding on each swipe | ~~High~~ **closed** | **High** | Delivered in Phase 8: `ExternalChangeWatcher` reconciles on `notify::active-workspace`, recognising our own changes by agreement rather than by a suppression flag |
+| Another per-monitor workspace extension runs alongside ours (e.g. Smart Workspace Manager) | Medium | **High** | Delivered in Phase 8: `findConflicts()` names `smart-workspace-manager@local` at enable time. SWM's delayed window moves race the Shell's animation and throw `record is undefined` from `_syncStacking` — errors wrongly blamed on this extension once already |
 | Reassignment strands or loses windows if the Shell dies mid-sync | Low | **High** | `restoreAll()` on disable; never move primary-monitor windows; refuse to run under dynamic workspaces |
 | The Shell tears a switch down mid-animation, leaving windows staged | Medium | **High** | Handled in Phase 6: the Overview does exactly this (`workspaceAnimation.js:322`), so the driver settles from `onStopped`, which fires on interruption too, and un-stages on every bail-out path |
 | Overview / switcher / alt-tab disagree with what the user sees | High | Low | Inherent to reassignment; documented in the README as accepted divergence, not a defect |
@@ -667,6 +751,7 @@ macos-workspaces@macosworkspaces.dev/
 │   ├── keybindingHandler.js
 │   ├── windowTracker.js
 │   ├── workspaceReassigner.js
+│   ├── externalWatcher.js
 │   ├── animationDriver.js
 │   └── settings.js
 ├── schemas/

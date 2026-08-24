@@ -8,6 +8,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {AnimationDriver} from './lib/animationDriver.js';
 import {getCursorMonitorIndex} from './lib/cursorMonitor.js';
+import {ExternalChangeWatcher} from './lib/externalWatcher.js';
 import {GestureHandler} from './lib/gestureHandler.js';
 import {KeybindingHandler} from './lib/keybindingHandler.js';
 import {MonitorStateManager} from './lib/monitorState.js';
@@ -19,11 +20,12 @@ import {WorkspaceReassigner} from './lib/workspaceReassigner.js';
 /**
  * Entry point for the MacOS Workspaces extension.
  *
- * As of Phase 7 a secondary monitor keeps its own workspace: both input paths
+ * As of Phase 8 a secondary monitor keeps its own workspace: both input paths
  * are per-monitor, the windows underneath are rotated so the monitor really
  * shows the workspace it claims to, both paths run through one shared animation
- * driver so they cannot look — or count — differently, and wrapping and slide
- * duration are the user's to choose.
+ * driver so they cannot look — or count — differently, wrapping and slide
+ * duration are the user's to choose, and anything that moves a workspace
+ * *without* going through this extension is reconciled after the fact.
  */
 export default class MacOSWorkspacesExtension extends Extension {
     /**
@@ -90,6 +92,17 @@ export default class MacOSWorkspacesExtension extends Extension {
             driver: this._driver,
         });
 
+        this._restoreVirtualIndexes();
+
+        // Last, so it is watching a world this extension has finished setting up.
+        this._watcher = new ExternalChangeWatcher({
+            interop: this._interop,
+            monitorState: this._monitorState,
+            windowTracker: this._windowTracker,
+            reassigner: this._reassigner,
+            driver: this._driver,
+        });
+
         console.log(`[macos-workspaces] enabled (v${this.metadata['version-name']}) — ` +
             `cursor on monitor ${getCursorMonitorIndex(this._interop)}`);
     }
@@ -113,10 +126,61 @@ export default class MacOSWorkspacesExtension extends Extension {
     }
 
     /**
+     * Puts every monitor back on the workspace it was showing before a lock.
+     *
+     * `session-modes: ["user"]` means GNOME calls `disable()` when the screen
+     * locks and `enable()` when it unlocks. Without this, every lock silently
+     * collapses all displays onto one workspace — which reads as a bug, not as
+     * a lifecycle event.
+     *
+     * The indices are applied *after* the window tracker has been built, never
+     * before: the tracker works out where each window belongs by measuring it
+     * against what its monitor is currently showing, so it has to do that while
+     * the rotation is still the identity.
+     *
+     * @private
+     */
+    _restoreVirtualIndexes() {
+        const saved = this._savedIndexes;
+        this._savedIndexes = null;
+
+        if (!saved || !this._reassigner?.enabled)
+            return;
+
+        // A display or a workspace appearing or vanishing while locked makes the
+        // saved indices meaningless; starting fresh is the honest answer.
+        if (saved.monitors !== this._monitorState.getMonitorCount() ||
+            saved.workspaces !== this._monitorState.getWorkspaceCount()) {
+            console.log('[macos-workspaces] the displays or workspaces changed while ' +
+                'locked — starting fresh rather than guessing');
+            return;
+        }
+
+        for (const [monitorIndex, workspaceIndex] of saved.indexes)
+            this._monitorState.setVirtualIndex(monitorIndex, workspaceIndex);
+
+        this._reassigner.syncAll(this._interop.getActiveWorkspaceIndex());
+        console.log(`[macos-workspaces] restored after unlock — ${this._monitorState.describe()}`);
+    }
+
+    /**
      * Called when the extension is disabled, and on session lock and unlock.
      * Must leave the Shell in exactly the state it was in before `enable()`.
      */
     disable() {
+        // Remembered across a lock, which disables and re-enables us.
+        if (this._monitorState && this._reassigner?.enabled) {
+            this._savedIndexes = {
+                monitors: this._monitorState.getMonitorCount(),
+                workspaces: this._monitorState.getWorkspaceCount(),
+                indexes: this._monitorState.getSnapshot(),
+            };
+        }
+
+        // Stop reacting to the world before dismantling the parts that react.
+        this._watcher?.destroy();
+        this._watcher = null;
+
         // Restore the Shell's own input handling before dropping the state it reads.
         this._keybindingHandler?.destroy();
         this._keybindingHandler = null;
