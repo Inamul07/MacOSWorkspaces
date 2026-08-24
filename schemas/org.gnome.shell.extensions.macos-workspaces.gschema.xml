@@ -2,7 +2,29 @@
 <schemalist gettext-domain="macos-workspaces">
   <schema id="org.gnome.shell.extensions.macos-workspaces"
           path="/org/gnome/shell/extensions/macos-workspaces/">
-    <!-- Phase 1 ships the schema skeleton only. Keys are defined in Phase 5:
-         enabled, sync-primary-workspace, wrap-around, gesture-threshold. -->
+
+    <key name="wrap-around" type="b">
+      <default>false</default>
+      <summary>Wrap around at the ends</summary>
+      <description>
+        Switching past the last workspace on a secondary monitor returns to the
+        first, and switching before the first goes to the last. The primary
+        monitor always stops at either end, as GNOME itself does: it drives the
+        real workspace, and wrapping it would slide backwards across every
+        workspace to get there.
+      </description>
+    </key>
+
+    <key name="animation-duration" type="i">
+      <default>250</default>
+      <range min="50" max="1000"/>
+      <summary>Slide duration in milliseconds</summary>
+      <description>
+        How long a workspace slide takes. The default matches GNOME's own
+        workspace switch. Swipes are scaled by this rather than fixed to it, so
+        a fast flick stays fast.
+      </description>
+    </key>
+
   </schema>
 </schemalist>

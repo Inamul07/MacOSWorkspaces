@@ -50,6 +50,24 @@ When GNOME is configured with "Workspaces on All Displays" (`org.gnome.mutter wo
 
 ---
 
+### Checking the preferences window
+`prefs.js` runs in its own process, so a change to it is testable **without a
+re-login** — unlike anything under `lib/`. Launch it against the live session and
+read the AT-SPI tree; `org.gnome.Shell.Screenshot` is access-denied on GNOME 46:
+
+```bash
+ssh UbuntuHP 'export XDG_RUNTIME_DIR=/run/user/1000
+  export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+  nohup gnome-extensions prefs macos-workspaces@macosworkspaces.dev >/tmp/prefs.log 2>&1 &'
+# then walk pyatspi for app name "org.gnome.Shell.Extensions"
+```
+
+Only the **visible** page is built, so switch pages before looking for a row that
+is not on the first one. Remember to recompile the schema after editing it —
+`glib-compile-schemas` on the *installed* copy, not just the source tree.
+
+---
+
 ### Reading the Shell's own source
 The GNOME 46 JS is **not** on disk and **not** in any `/usr/share/gnome-shell/*.gresource`.
 It is linked into `libshell-14.so`:
@@ -440,9 +458,15 @@ Execute inside a nested Wayland session (`./scripts/dev-session.sh`):
 - [ ] With the default single-row layout, `Ctrl`+`Alt`+`Up`/`Down` do nothing, as in stock GNOME
 
 #### Phase 7 — Settings
-- [ ] Each settings change takes effect immediately (no restart needed)
-- [ ] `wrap-around: true` enables circular navigation
-- [ ] `sync-primary-workspace: false` decouples primary monitor from global workspace
+- [ ] Each settings change takes effect on the next switch (no restart needed)
+- [ ] `wrap-around: true`: a secondary steps from the last workspace to the first, animated
+- [ ] `wrap-around: true`: the primary still stops at either end
+- [ ] `wrap-around: true`: the wrapped-to workspace shows the right windows
+- [ ] `animation-duration: 600`: keystrokes visibly slower; a fast flick still fast
+- [ ] `animation-duration: 50`: no flicker or torn frame at either end of the slide
+
+> `sync-primary-workspace` and `gesture-threshold` were dropped in Phase 7 — see
+> plan.md for why. Do not re-add them without re-reading that section.
 
 #### Phase 8 — Robustness
 - [ ] Connect a monitor mid-session: managed immediately

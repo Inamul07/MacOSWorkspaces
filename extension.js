@@ -11,6 +11,7 @@ import {getCursorMonitorIndex} from './lib/cursorMonitor.js';
 import {GestureHandler} from './lib/gestureHandler.js';
 import {KeybindingHandler} from './lib/keybindingHandler.js';
 import {MonitorStateManager} from './lib/monitorState.js';
+import {SettingsManager} from './lib/settings.js';
 import {checkCompatibility, createInterop} from './lib/shellInterop.js';
 import {WindowTracker} from './lib/windowTracker.js';
 import {WorkspaceReassigner} from './lib/workspaceReassigner.js';
@@ -18,10 +19,11 @@ import {WorkspaceReassigner} from './lib/workspaceReassigner.js';
 /**
  * Entry point for the MacOS Workspaces extension.
  *
- * As of Phase 6 a secondary monitor keeps its own workspace: both input paths
+ * As of Phase 7 a secondary monitor keeps its own workspace: both input paths
  * are per-monitor, the windows underneath are rotated so the monitor really
- * shows the workspace it claims to, and both paths run through one shared
- * animation driver so they cannot look — or count — differently.
+ * shows the workspace it claims to, both paths run through one shared animation
+ * driver so they cannot look — or count — differently, and wrapping and slide
+ * duration are the user's to choose.
  */
 export default class MacOSWorkspacesExtension extends Extension {
     /**
@@ -38,6 +40,7 @@ export default class MacOSWorkspacesExtension extends Extension {
         }
 
         this._interop = createInterop();
+        this._settings = new SettingsManager(this.getSettings());
         this._monitorState = new MonitorStateManager(this._interop);
         this._windowTracker = new WindowTracker({
             interop: this._interop,
@@ -47,6 +50,7 @@ export default class MacOSWorkspacesExtension extends Extension {
             interop: this._interop,
             monitorState: this._monitorState,
             windowTracker: this._windowTracker,
+            settings: this._settings,
         });
 
         // Persistence rotates windows across a fixed ring of workspaces. Dynamic
@@ -73,6 +77,7 @@ export default class MacOSWorkspacesExtension extends Extension {
             interop: this._interop,
             monitorState: this._monitorState,
             reassigner: this._reassigner,
+            settings: this._settings,
         });
 
         this._gestureHandler = new GestureHandler({
@@ -134,6 +139,9 @@ export default class MacOSWorkspacesExtension extends Extension {
 
         this._monitorState?.destroy();
         this._monitorState = null;
+
+        this._settings?.destroy();
+        this._settings = null;
 
         this._interop = null;
 

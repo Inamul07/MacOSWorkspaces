@@ -459,26 +459,86 @@ matching GNOME's native slide.
 
 ## Phase 7 — Settings & Preferences UI
 
-**Goal:** Allow runtime configuration of all meaningful behaviors without editing code.
+**Goal:** Expose the choices that are genuinely the user's, and no others.
+
+### Two planned settings were dropped, deliberately
+
+- **`sync-primary-workspace`** — setting it false would stop the primary
+  activating GNOME's real workspace, which means the primary needs its own stack,
+  which means rotating its windows around a fixed display workspace. That is the
+  pinned-display design rejected on hardware during Phase 5. Shipping it as a
+  toggle would revive a design already found unusable, and would put the risky
+  half of the extension on the display the user works on. The primary always
+  drives the real workspace; documented as a deliberate limit, not an oversight.
+- **`gesture-threshold`** — the swipe's confirm velocity lives in a module
+  constant (`swipeTracker.js:25`, `VELOCITY_THRESHOLD_TOUCHPAD = 0.6`), not an
+  instance property. Changing it means overriding `SwipeTracker._getEndProgress`
+  and copying ~25 lines of the Shell's deceleration-projection math — internals
+  we would then own and have to track across releases, to move one number. The
+  gesture keeps GNOME's own feel; `animation-duration` covers what we actually
+  control.
+
+`enabled` was dropped too: GNOME already has an extension toggle, and a second
+one that means something subtly different is a trap.
 
 ### Deliverables
 - `schemas/org.gnome.shell.extensions.macos-workspaces.gschema.xml`:
-  - `enabled` (boolean, default `true`)
-  - `sync-primary-workspace` (boolean, default `true`) — primary monitor gesture activates global workspace
-  - `wrap-around` (boolean, default `false`) — swiping past last workspace wraps to first
-  - `gesture-threshold` (double, default `0.3`) — minimum swipe velocity to confirm a switch
-- `prefs.js` — `Adw.PreferencesWindow` with toggle rows, spin row (0.1–1.0, step 0.05), and About page
-- `lib/settings.js` — `SettingsManager` wrapping `Gio.Settings`; emits change notifications consumed by `GestureHandler` at runtime
+  - `wrap-around` (boolean, default `false`) — a **secondary** monitor may step
+    past either end of the strip. The primary never wraps, whatever the setting
+    says: it has no staging, so wrapping it would slide backwards across every
+    workspace to reach the first one. Enforced in `AnimationDriver.resolveVirtual()`.
+  - `animation-duration` (int, 50–1000, default `250`) — matches the Shell's
+    `WINDOW_ANIMATION_TIME`. A keystroke uses it outright; a **swipe is scaled**
+    by it rather than fixed to it, so a fast flick stays fast and keeps feeling
+    attached to the fingers.
+- `lib/settings.js` — `SettingsManager`. Reads every value at the point of use
+  rather than caching, so a preference takes effect on the next switch with
+  nothing to notify and no subscription to leak. Takes an injected `Gio.Settings`,
+  which is what makes it testable. Falls back to stock behaviour when the schema
+  is missing rather than throwing.
+- `prefs.js` — `Adw.PreferencesPage` with an `Adw.SwitchRow` and an
+  `Adw.SpinRow`, both `Gio.Settings.bind()`-ed, plus an **About** page that
+  states the three divergences users would otherwise file as bugs: fixed
+  workspaces are required, the Overview shows where windows really are, and the
+  primary monitor's windows are never moved.
+- `lib/windowTracker.js` — `signedOffset()`, the shorter way round the ring.
+  With wrap on, a monitor on the last workspace has the first as its right-hand
+  neighbour; plain subtraction calls them `count - 1` apart and would park that
+  neighbour out of reach mid-slide. `stageMonitor()` uses it only when wrapping
+  is on, so the non-wrap case is unchanged.
+- `lib/monitorState.js` — `wrapIndex()` beside `clampIndex()`; which one a switch
+  uses is the preference, decided by the caller.
+
+### A defect the step-based API exposed
+Settling now takes a **step** rather than an absolute virtual index, because a
+wrapped switch moves one workspace while its index jumps the other way round the
+strip — the two can no longer be derived from each other. The keyboard path was
+then passing its per-press delta, which the driver applied to the session's
+frozen anchor, so a second keypress mid-settle repeated the first instead of
+continuing it. Sessions now carry the distance travelled so far, and a keystroke
+adds to it. Caught by the Phase 6 interruption test, which is why it was written.
+
+### Automated coverage
+165 checks, all passing: 45 driver, 42 keyboard, 20 persistence, 18 gesture,
+12 settings, 8 tracker (`gjs`), 20 state (Node). ESLint clean;
+`glib-compile-schemas --strict` clean.
 
 ### Manual Verification Checklist
-- [ ] All settings readable and writable from the prefs window
-- [ ] Setting changes take effect immediately without extension restart
-- [ ] `wrap-around: true` allows swiping from the last workspace to the first
-- [ ] `sync-primary-workspace: false` prevents global workspace activation on primary-monitor swipe
-- [ ] `glib-compile-schemas schemas/` passes with no errors or warnings
+- [x] `glib-compile-schemas schemas/` passes with no errors or warnings
+- [x] Both settings readable and writable outside the prefs window
+      (`gsettings get/range` against the installed schema)
+- [x] Prefs window opens and both rows build — confirmed through the AT-SPI tree:
+      `[frame] 'MacOS Workspaces'` → pages `General` and `About`, rows
+      `Wrap around` and `Slide duration`. `org.gnome.Shell.Screenshot` is
+      access-denied on GNOME 46, so accessibility remains the way to prove content
+- [ ] Changing either setting takes effect on the next switch, with no restart
+- [ ] `wrap-around: true`: a secondary steps from the last workspace to the first, animated
+- [ ] `wrap-around: true`: the primary still stops at either end
+- [ ] `wrap-around: true`: the wrapped-to workspace shows the right windows, not an empty one
+- [ ] `animation-duration: 600`: keystrokes visibly slower; a fast flick still fast
+- [ ] `animation-duration: 50`: no flicker or torn frame at either end of the slide
 
 ---
-
 
 ## Phase 8 — Edge Cases & Robustness
 
@@ -620,6 +680,7 @@ macos-workspaces@macosworkspaces.dev/
 │   ├── gestureHandler.test.js
 │   ├── keybindingHandler.test.js
 │   ├── windowTracker.test.js
+│   ├── workspaceReassigner.test.js
 │   ├── settings.test.js
 │   └── integration/
 │       └── playbook.md
