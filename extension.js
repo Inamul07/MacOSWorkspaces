@@ -16,6 +16,7 @@ import {SettingsManager} from './lib/settings.js';
 import {checkCompatibility, createInterop} from './lib/shellInterop.js';
 import {WindowTracker} from './lib/windowTracker.js';
 import {WorkspaceReassigner} from './lib/workspaceReassigner.js';
+import {debug, error, info, setVerbose} from './lib/log.js';
 
 /**
  * Entry point for the MacOS Workspaces extension.
@@ -36,13 +37,17 @@ export default class MacOSWorkspacesExtension extends Extension {
         // half-patching a Shell we do not understand.
         const incompatible = checkCompatibility();
         if (incompatible) {
-            console.error(`[macos-workspaces] incompatible GNOME Shell — ${incompatible}. ` +
+            error(`incompatible GNOME Shell — ${incompatible}. ` +
                 'Extension disabled; the Shell is untouched.');
             return;
         }
 
         this._interop = createInterop();
         this._settings = new SettingsManager(this.getSettings());
+
+        // Before anything else logs, so a user who turned this on to diagnose a
+        // startup problem actually sees the startup.
+        setVerbose(this._settings.debugLogging);
         this._monitorState = new MonitorStateManager(this._interop);
         this._windowTracker = new WindowTracker({
             interop: this._interop,
@@ -103,7 +108,7 @@ export default class MacOSWorkspacesExtension extends Extension {
             driver: this._driver,
         });
 
-        console.log(`[macos-workspaces] enabled (v${this.metadata['version-name']}) — ` +
+        info(`enabled (v${this.metadata['version-name']}) — ` +
             `cursor on monitor ${getCursorMonitorIndex(this._interop)}`);
     }
 
@@ -121,7 +126,7 @@ export default class MacOSWorkspacesExtension extends Extension {
         for (const monitorIndex of this._monitorState.getSnapshot().keys())
             this._monitorState.setVirtualIndex(monitorIndex, current);
 
-        console.log('[macos-workspaces] per-monitor persistence on — every monitor ' +
+        info('per-monitor persistence on — every monitor ' +
             `starting on workspace ${current}, primary untouched`);
     }
 
@@ -151,7 +156,7 @@ export default class MacOSWorkspacesExtension extends Extension {
         // saved indices meaningless; starting fresh is the honest answer.
         if (saved.monitors !== this._monitorState.getMonitorCount() ||
             saved.workspaces !== this._monitorState.getWorkspaceCount()) {
-            console.log('[macos-workspaces] the displays or workspaces changed while ' +
+            debug('the displays or workspaces changed while ' +
                 'locked — starting fresh rather than guessing');
             return;
         }
@@ -160,7 +165,7 @@ export default class MacOSWorkspacesExtension extends Extension {
             this._monitorState.setVirtualIndex(monitorIndex, workspaceIndex);
 
         this._reassigner.syncAll(this._interop.getActiveWorkspaceIndex());
-        console.log(`[macos-workspaces] restored after unlock — ${this._monitorState.describe()}`);
+        debug(`restored after unlock — ${this._monitorState.describe()}`);
     }
 
     /**
@@ -209,6 +214,10 @@ export default class MacOSWorkspacesExtension extends Extension {
 
         this._interop = null;
 
-        console.log('[macos-workspaces] disabled');
+        // Module state outlives the extension object, so leaving this on would
+        // carry into the next enable regardless of the setting.
+        setVerbose(false);
+
+        info('disabled');
     }
 }

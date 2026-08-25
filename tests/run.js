@@ -18,6 +18,7 @@ import './cursorMonitor.test.js';
 import './externalWatcher.test.js';
 import './gestureHandler.test.js';
 import './keybindingHandler.test.js';
+import './log.test.js';
 import './monitorState.test.js';
 import './settings.test.js';
 import './windowTracker.test.js';

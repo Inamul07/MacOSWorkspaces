@@ -8,11 +8,13 @@ With GNOME's **Workspaces on All Displays** enabled, a three-finger swipe moves
 gesture, works out which display the cursor is on, and slides only that display —
 leaving the others exactly where they were.
 
-> **Status: Phase 3 — gesture interception.** A swipe now moves only the monitor
-> it started on. The new workspace does not yet *persist* on a secondary monitor —
-> it animates and snaps back — because GNOME has a single global workspace.
-> Persistence is Phase 5; keyboard switching is Phase 4.
-> See [plan.md](plan.md) for the full roadmap.
+It does the same for `Ctrl`+`Alt`+arrow, and the workspace a secondary monitor
+lands on **stays** — it really shows its own windows, rather than animating and
+snapping back.
+
+> **Status: 0.1.0.** Feature-complete for GNOME 46 and pending submission to
+> extensions.gnome.org. See [plan.md](plan.md) for how it was built and
+> [CHANGELOG.md](CHANGELOG.md) for what is in this release.
 
 ---
 
@@ -25,7 +27,63 @@ leaving the others exactly where they were.
 | GJS         | ≥ 1.78 (ships with GNOME 46) |
 | Build tools | `glib-compile-schemas` only |
 
-There are no npm, pip or apt dependencies beyond what Ubuntu 24.04 ships.
+There are no npm, pip or apt dependencies beyond what Ubuntu 24.04 ships. The
+`package.json` in this repository carries lint tooling for development and is
+not part of what gets installed.
+
+### GNOME settings this needs
+
+Per-monitor workspaces are built by moving windows between GNOME's own
+workspaces, which only works if that set of workspaces holds still:
+
+```bash
+gsettings set org.gnome.mutter workspaces-only-on-primary false
+gsettings set org.gnome.mutter dynamic-workspaces false
+gsettings set org.gnome.desktop.wm.preferences num-workspaces 4
+```
+
+Dynamic workspaces are created and destroyed as you use them, which would strand
+windows on workspaces you cannot reach. If they are on, the extension leaves the
+window-moving half switched off and says so in the journal; gestures and
+shortcuts still work. Four is the minimum: three to slide within, and one to
+park everything else clear of them.
+
+---
+
+## Settings
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| Wrap around | off | A secondary monitor continues past the last workspace to the first. The primary always stops at either end, as GNOME does — it drives the real workspace, and wrapping it would slide backwards across every workspace to get there. |
+| Slide duration | 250 ms | How long a switch takes. A swipe is *scaled* by this rather than fixed to it, so a fast flick stays fast. |
+
+There is also a hidden `debug-logging` key, off by default, for diagnosing a
+problem:
+
+```bash
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/macos-workspaces@inamul07.github.io/schemas \
+    set org.gnome.shell.extensions.macos-workspaces debug-logging true
+journalctl -f -o cat /usr/bin/gnome-shell | grep macos-workspaces
+```
+
+---
+
+## Known limitations
+
+These are consequences of how GNOME works, not bugs waiting to be fixed:
+
+- **The Overview disagrees with your eyes.** GNOME has exactly one workspace at a
+  time and binds windows to workspaces globally. Giving a second monitor its own
+  workspace means moving its windows onto whichever workspace is on screen — so
+  the Overview, the workspace switcher and Alt+Tab show where a window is
+  *parked*, which is not always where you see it. The only alternative GNOME
+  offers is confining workspaces to the primary monitor, which gives secondary
+  displays no workspaces at all.
+- **The primary monitor's windows are never moved.** That is deliberate: a fault
+  in the window-moving code cannot scatter the windows on the display you are
+  most likely working on.
+- **Positions reset if displays change while the screen is locked.** They are
+  preserved across an ordinary lock and unlock.
 
 ---
 
@@ -56,7 +114,7 @@ to load `libc.so.6`; the script refuses to start in that case.
 ### Manual install
 
 ```bash
-UUID=macos-workspaces@macosworkspaces.dev
+UUID=macos-workspaces@inamul07.github.io
 DEST=~/.local/share/gnome-shell/extensions/$UUID
 mkdir -p "$DEST"
 cp -r extension.js prefs.js metadata.json schemas "$DEST/"
@@ -73,12 +131,12 @@ fresh install to be picked up. Inside a nested session, just relaunch the script
 
 ```bash
 # Enable / disable / reset
-gnome-extensions enable  macos-workspaces@macosworkspaces.dev
-gnome-extensions disable macos-workspaces@macosworkspaces.dev
-gnome-extensions reset   macos-workspaces@macosworkspaces.dev
+gnome-extensions enable  macos-workspaces@inamul07.github.io
+gnome-extensions disable macos-workspaces@inamul07.github.io
+gnome-extensions reset   macos-workspaces@inamul07.github.io
 
 # Open the preferences window
-gnome-extensions prefs macos-workspaces@macosworkspaces.dev
+gnome-extensions prefs macos-workspaces@inamul07.github.io
 
 # Recompile the settings schema after editing it
 glib-compile-schemas --strict schemas/

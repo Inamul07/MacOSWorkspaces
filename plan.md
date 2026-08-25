@@ -60,7 +60,7 @@ Key GNOME Shell internal objects (stable in GNOME 46):
 **Goal:** A loadable, no-op extension that round-trips `enable()` / `disable()` cleanly with zero side effects.
 
 ### Deliverables
-- Extension directory at `~/.local/share/gnome-shell/extensions/macos-workspaces@macosworkspaces.dev/`
+- Extension directory at `~/.local/share/gnome-shell/extensions/macos-workspaces@inamul07.github.io/`
 - `metadata.json` — UUID, name, description, `"shell-version": ["46"]`
 - `extension.js` — ES-module class extending `Extension` with empty `enable()` / `disable()`
 - `prefs.js` — stub `Adw.PreferencesWindow`
@@ -69,7 +69,10 @@ Key GNOME Shell internal objects (stable in GNOME 46):
 - `scripts/dev-session.sh` — one-command nested Wayland test session launcher
 
 ### Key Decisions
-- UUID: `macos-workspaces@macosworkspaces.dev`
+- UUID: `macos-workspaces@inamul07.github.io` — changed in Phase 10 from
+  `…@macosworkspaces.dev`, a domain the author does not own. The UUID is the
+  install directory *and* the settings path, so it is free to change before
+  publishing and orphans every user's settings afterwards
 - ES modules **only** — no legacy `imports.*` API
 - `Adw.PreferencesWindow` for settings UI (ships with Ubuntu 24.04)
 - All GNOME Shell internal API access isolated in `lib/shellInterop.js`
@@ -77,7 +80,7 @@ Key GNOME Shell internal objects (stable in GNOME 46):
   second consumer to justify it; Phase 2's modules are refactored through it then)
 
 ### Manual Verification Checklist — ✅ complete
-- [x] `gnome-extensions enable macos-workspaces@macosworkspaces.dev` succeeds in nested Wayland session
+- [x] `gnome-extensions enable macos-workspaces@inamul07.github.io` succeeds in nested Wayland session
 - [x] `journalctl -f -o cat /usr/bin/gnome-shell` shows no errors on enable or disable
 - [x] Prefs window opens without crash — confirmed via the AT-SPI tree (`[frame] 'MacOS Workspaces'` → page `General` → group `MacOS Workspaces`); `org.gnome.Shell.Screenshot` is access-denied on GNOME 46, so accessibility is the way to prove window content
 - [x] `glib-compile-schemas schemas/` exits with code 0 (`--strict`)
@@ -739,24 +742,67 @@ with the session.
 
 ## Phase 10 — Packaging & Distribution
 
-**Goal:** Package for GNOME Extensions (EGO) submission and direct install.
+**Goal:** A bundle someone else can install, and a repository they can build from.
+
+### Three decisions taken here
+- **The UUID changed** to `macos-workspaces@inamul07.github.io`. It was
+  `…@macosworkspaces.dev`, a domain the author does not own, and the URL in
+  `metadata.json` pointed at a repository that 404s. The UUID is both the install
+  directory and the GSettings path, so this is free before publishing and
+  orphans every user's settings afterwards. The *name* stays: it is what
+  describes the extension, and a reviewer asking to drop "MacOS" is a smaller
+  problem than a UUID nobody can trace.
+- **Verbose logging is now off by default**, behind a hidden `debug-logging`
+  key. This extension acts on every workspace switch and every window it re-parks,
+  and narrating that into a user's journal forever is not a reasonable default.
+  The lines are kept rather than deleted — nearly every bug in this project was
+  found by reading them — and are one `gsettings` command away.
+- **`shell-version` stays `["46"]`.** It is the only version this has ever run
+  on, and the extension does deep surgery on internals that move between
+  releases. EGO allows adding versions later without a fresh submission.
 
 ### Deliverables
-- `Makefile` targets: `all`, `install`, `uninstall`, `pack`, `schemas`, `lint`, `test`, `clean`
-- `scripts/pack.sh` — produces `macos-workspaces@macosworkspaces.dev.zip`
-- Compiled `gschemas.compiled` included in zip
-- `CHANGELOG.md` (Keep a Changelog format), `LICENSE` (GPL-2.0), final `README.md` with screenshots
-- EGO submission checklist verified against review guidelines
+- `Makefile` — `install`, `uninstall`, `enable`, `disable`, `pack`, `lint`,
+  `test`, `check`, `schemas`, `clean`, `help`. `pack` depends on `check`, so a
+  bundle cannot be built from a tree that fails its own tests.
+- `scripts/pack.sh` — validates the schema and runs the unit tests, then
+  `gnome-extensions pack --extra-source=lib --schema=…`, and prints the bundle's
+  contents so what is being shipped is visible.
+- `lib/log.js` — `debug`/`info`/`warn`/`error`, with the verbose channel gated.
+  Also removes the `[macos-workspaces]` prefix that had been repeated at 38 call
+  sites. Reset on `disable()`: module state outlives the extension object, so
+  leaving it on would carry into the next enable regardless of the setting.
+- `LICENSE` (GPL-2.0), `CHANGELOG.md` (Keep a Changelog), a rewritten `README.md`
+  with the required GNOME settings, both preferences, the hidden key, and the
+  limitations stated as consequences rather than defects.
+- `docs/publishing.md` — the EGO submission checklist, including what to say in
+  the submission notes about internal API use and about moving windows.
+
+> **Corrected from the original plan:** it called for `gschemas.compiled` to be
+> *included* in the zip. It is not, and should not be: `gnome-extensions install`
+> compiles the schema itself at install time, which was verified by installing
+> the bundle and finding the compiled file present. Shipping one would only risk
+> it going stale against the XML beside it.
 
 ### Manual Verification Checklist
-- [ ] `make pack` produces a valid `.zip`
-- [ ] `gnome-extensions install --force macos-workspaces@macosworkspaces.dev.zip` succeeds, then the extension enables cleanly (there is **no** `gnome-extensions validate` subcommand on GNOME 46 — the available commands are help, version, enable, disable, reset, uninstall, list, info, show, prefs, create, pack, install)
-- [ ] Manual install from zip on a **clean** Ubuntu 24.04 VM works with no extra steps
-- [ ] `CHANGELOG.md` entry exists for the release version
-- [ ] `LICENSE` file present with GPL-2.0 text
+- [x] `make pack` produces a valid `.zip` — 17 files, 108 KB, `lib/` and
+      `schemas/` both included, no test or tooling files
+- [x] `gnome-extensions install --force …zip` succeeds and the schema reads back
+      from the installed copy (`wrap-around`, `animation-duration`,
+      `debug-logging`). There is **no** `gnome-extensions validate` subcommand on
+      GNOME 46 — the available commands are help, version, enable, disable,
+      reset, uninstall, list, info, show, prefs, create, pack, install
+- [x] The live session was migrated to the new UUID: `enabled-extensions`
+      rewritten in place, old directory removed. It loads at the next login,
+      since GNOME scans extensions only at startup
+- [x] `CHANGELOG.md` has an entry for 0.1.0
+- [x] `LICENSE` present with the GPL-2.0 text
+- [x] 212 checks pass, lint clean, schema valid, with the release build
+- [ ] The extension enables cleanly under the new UUID after a login
+- [ ] Manual install from the zip on a **clean** Ubuntu 24.04 VM, no extra steps
+- [ ] Submitted to extensions.gnome.org
 
 ---
-
 
 ## Risk Register
 
@@ -781,7 +827,7 @@ with the session.
 ## Final File Structure
 
 ```
-macos-workspaces@macosworkspaces.dev/
+macos-workspaces@inamul07.github.io/
 ├── extension.js
 ├── prefs.js
 ├── metadata.json

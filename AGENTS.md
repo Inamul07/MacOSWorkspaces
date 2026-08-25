@@ -90,7 +90,7 @@ read the AT-SPI tree; `org.gnome.Shell.Screenshot` is access-denied on GNOME 46:
 ```bash
 ssh UbuntuHP 'export XDG_RUNTIME_DIR=/run/user/1000
   export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
-  nohup gnome-extensions prefs macos-workspaces@macosworkspaces.dev >/tmp/prefs.log 2>&1 &'
+  nohup gnome-extensions prefs macos-workspaces@inamul07.github.io >/tmp/prefs.log 2>&1 &'
 # then walk pyatspi for app name "org.gnome.Shell.Extensions"
 ```
 
@@ -127,8 +127,8 @@ glib-compile-schemas schemas/
 # ── Install extension to user directory ───────────────────────────────────
 make install
 # Equivalent manual:
-cp -r . ~/.local/share/gnome-shell/extensions/macos-workspaces@macosworkspaces.dev/
-glib-compile-schemas ~/.local/share/gnome-shell/extensions/macos-workspaces@macosworkspaces.dev/schemas/
+cp -r . ~/.local/share/gnome-shell/extensions/macos-workspaces@inamul07.github.io/
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/macos-workspaces@inamul07.github.io/schemas/
 
 # ── Uninstall ──────────────────────────────────────────────────────────────
 make uninstall
@@ -139,12 +139,12 @@ make uninstall
 dbus-run-session gnome-shell --nested --wayland
 
 # ── Enable / disable / reload inside the nested session ───────────────────
-gnome-extensions enable  macos-workspaces@macosworkspaces.dev
-gnome-extensions disable macos-workspaces@macosworkspaces.dev
-gnome-extensions reset   macos-workspaces@macosworkspaces.dev
+gnome-extensions enable  macos-workspaces@inamul07.github.io
+gnome-extensions disable macos-workspaces@inamul07.github.io
+gnome-extensions reset   macos-workspaces@inamul07.github.io
 
 # ── Open preferences window ───────────────────────────────────────────────
-gnome-extensions prefs macos-workspaces@macosworkspaces.dev
+gnome-extensions prefs macos-workspaces@inamul07.github.io
 
 # ── Run unit tests ────────────────────────────────────────────────────────
 gjs tests/run.js
@@ -158,7 +158,7 @@ gjs tests/run.js
 
 # ── Package for distribution ──────────────────────────────────────────────
 make pack
-# Produces: macos-workspaces@macosworkspaces.dev.zip
+# Produces: macos-workspaces@inamul07.github.io.zip
 
 # ── Monitor Shell logs in real time ───────────────────────────────────────
 journalctl -f -o cat /usr/bin/gnome-shell
@@ -199,6 +199,14 @@ journalctl -f -o cat /usr/bin/gnome-shell
 - Always clean up signal connections in `disable()` to prevent memory leaks.
 
 ### Logging
+Use `lib/log.js`, never `console.*` directly. `debug()` is gated behind the
+hidden `debug-logging` setting and is where per-switch and per-window detail
+belongs; `info()` is reserved for lifecycle — enabling, disabling, and whether
+the window-moving half is running — and someone reading an unfamiliar journal
+should be able to tell those three things and nothing more. `warn()` and
+`error()` are always visible. None of them take the `[macos-workspaces]` prefix;
+the module adds it.
+
 - `console.log('[macos-workspaces] ...')` — info level
 - `console.warn('[macos-workspaces] ...')` — non-fatal issues
 - `console.error('[macos-workspaces] ...')` — errors
@@ -290,7 +298,7 @@ export DCONF_PROFILE="$HOME/.config/dconf/profile/macos_workspaces_dev"
 export XDG_RUNTIME_DIR=/run/user/1000
 exec dbus-run-session -- bash -c '
   gsettings set org.gnome.shell disable-user-extensions false
-  gsettings set org.gnome.shell enabled-extensions "['"'"'macos-workspaces@macosworkspaces.dev'"'"']"
+  gsettings set org.gnome.shell enabled-extensions "['"'"'macos-workspaces@inamul07.github.io'"'"']"
   printf "%s" "$DBUS_SESSION_BUS_ADDRESS" > /tmp/nested-bus
   exec gnome-shell --headless --virtual-monitor 1024x576
 '
@@ -354,9 +362,9 @@ export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/nested-bus)
 export DCONF_PROFILE=$HOME/.config/dconf/profile/macos_workspaces_dev
 
 gnome-extensions list --enabled
-gnome-extensions info    macos-workspaces@macosworkspaces.dev
-gnome-extensions enable  macos-workspaces@macosworkspaces.dev
-gnome-extensions disable macos-workspaces@macosworkspaces.dev
+gnome-extensions info    macos-workspaces@inamul07.github.io
+gnome-extensions enable  macos-workspaces@inamul07.github.io
+gnome-extensions disable macos-workspaces@inamul07.github.io
 ```
 
 Allow **60s+** timeouts. Cold-activating `org.gnome.Shell.Extensions` waits on
@@ -379,7 +387,7 @@ through the accessibility tree instead — it confirms the actual content, not j
 that a process survived:
 
 ```bash
-gnome-extensions prefs macos-workspaces@macosworkspaces.dev &
+gnome-extensions prefs macos-workspaces@inamul07.github.io &
 sleep 10
 GTK_A11Y=atspi python3 - <<'EOF'
 import pyatspi

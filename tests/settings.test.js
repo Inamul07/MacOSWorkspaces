@@ -64,6 +64,21 @@ section('duration');
     s.destroy();
 }
 
+section('debug logging');
+{
+    const gio = fakeSettings({'debug-logging': true});
+    const s = new SettingsManager(gio);
+    check('the hidden key is read like any other', s.debugLogging === true);
+    gio.values['debug-logging'] = false;
+    check('and read again at the point of use', s.debugLogging === false);
+    s.destroy();
+}
+{
+    const s = new SettingsManager(fakeSettings({}));
+    check('a missing key is off, not undefined', s.debugLogging === false);
+    s.destroy();
+}
+
 section('without a schema');
 {
     const s = new SettingsManager(null);

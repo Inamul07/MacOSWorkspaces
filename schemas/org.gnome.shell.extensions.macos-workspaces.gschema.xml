@@ -26,5 +26,17 @@
       </description>
     </key>
 
+    <key name="debug-logging" type="b">
+      <default>false</default>
+      <summary>Write detailed logs to the journal</summary>
+      <description>
+        Records every workspace switch and every window this extension moves.
+        Off by default, and deliberately not shown in the preferences window:
+        it is for diagnosing a problem, not for daily use. Turn it on with
+        gsettings, reproduce the problem, then read the journal with
+        journalctl -f -o cat /usr/bin/gnome-shell.
+      </description>
+    </key>
+
   </schema>
 </schemalist>

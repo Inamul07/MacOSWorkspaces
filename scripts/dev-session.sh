@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-UUID='macos-workspaces@macosworkspaces.dev'
+UUID='macos-workspaces@inamul07.github.io'
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST_DIR="${HOME}/.local/share/gnome-shell/extensions/${UUID}"
 # Sized to fit inside a 1366x768 panel once the host top bar and the nested

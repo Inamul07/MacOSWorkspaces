@@ -1,10 +1,10 @@
 {
-    "uuid": "macos-workspaces@macosworkspaces.dev",
+    "uuid": "macos-workspaces@inamul07.github.io",
     "name": "MacOS Workspaces",
     "description": "Gives every monitor its own independent workspace stack, the way macOS does. A three-finger swipe advances only the display the cursor is on; every other monitor stays put.",
     "shell-version": ["46"],
     "session-modes": ["user"],
     "settings-schema": "org.gnome.shell.extensions.macos-workspaces",
-    "url": "https://github.com/macosworkspaces/macos-workspaces",
+    "url": "https://github.com/Inamul07/MacOSWorkspaces",
     "version-name": "0.1.0"
 }
