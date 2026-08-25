@@ -443,12 +443,38 @@ asking for a re-login.
 
 ### Unit Tests
 ```bash
-gjs tests/run.js
+./scripts/test.sh          # or: gjs -m tests/run.js
+./scripts/lint.sh          # eslint over extension.js, prefs.js, lib/ and tests/
+./scripts/validate-schema.sh
 ```
-All files matching `tests/*.test.js` are auto-discovered. Tests must exit code 0 on success.
+
+`gjs -m` is required — the whole codebase is ES modules and the plain `gjs
+tests/run.js` form will not load them.
+
+Test files are **listed in `tests/run.js`, not discovered**. Adding a suite means
+adding one import line. This is deliberate: a file that fails to load should be a
+hard error, not a suite that silently contributes nothing.
+
+A test file *is* its side effect. Importing it runs its checks; each registers
+with `tests/harness.js`, and the runner totals them and sets the exit status. Use
+`suite()`, `section()` and `check()` from the harness rather than a local
+counter, and take doubles from `tests/stubs.js` where one fits.
+
+Everything runs under `gjs` — there is no Node in the test path. `monitorState`
+was once tested under Node because it imported `Main` directly; it takes an
+injected bundle now, so that harness is gone.
+
+Keep the doubles thin. A stub that grows behaviour of its own starts testing
+itself, and will drift from the real Shell object without any test failing to
+say so.
 
 ### Integration Tests (Manual)
-Execute inside a nested Wayland session (`./scripts/dev-session.sh`):
+The full checklist lives in `tests/integration/playbook.md` — every manual item
+from Phases 1-8 in one document, with the commands that drive the scriptable
+parts. The per-phase lists below are kept as a quick index.
+
+Execute against a real two-monitor session; a nested one
+(`./scripts/dev-session.sh`) cannot be hotplugged and has no touchpad.
 
 #### Phase 1 — Basic Load
 - [ ] Extension enables without errors in `journalctl`

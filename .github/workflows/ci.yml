@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GJS and schema tools
+        # gjs runs the unit tests; the extension's own modules take every Shell
+        # dependency as an injected bundle, so no GNOME session is needed.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gjs libglib2.0-dev-bin
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install lint dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npx eslint extension.js prefs.js lib tests
+
+      - name: Validate GSettings schema
+        run: ./scripts/validate-schema.sh
+
+      - name: Unit tests
+        run: gjs -m tests/run.js

@@ -669,27 +669,70 @@ verified.
 
 ## Phase 9 — Testing & QA
 
-**Goal:** Repeatable, documented test suite covering unit and integration scenarios.
+**Goal:** One command runs everything, from a checkout, with nothing to remember.
 
 > **Constraint discovered in Phase 3:** standalone `gjs` cannot import
 > `resource:///org/gnome/shell/...` — those resources exist only inside the running
 > Shell process. Any module that imports them directly is untestable outside GNOME.
-> This is why every Shell dependency is injected through `lib/shellInterop.js`
-> (Phase 3): tests construct the modules with fakes and never touch a real Shell.
+> This is why every Shell dependency is injected through `lib/shellInterop.js`:
+> tests construct the modules with fakes and never touch a real Shell. Every
+> module except `shellInterop.js` itself is covered.
+
+### The problem this phase solves
+Phases 2-8 grew 200-odd checks in a session scratchpad under names like
+`ad.test.js` and `p5.test.js`, split across two runtimes — most under `gjs`, and
+`monitorState` under Node with a stub for `Main`. None of it was in the
+repository. A fresh checkout had no tests at all, and the scratchpad disappears
+with the session.
 
 ### Deliverables
-- `tests/run.js` — GJS test runner entry point
-- `tests/stubs.js` — fake `layoutManager`, `workspaceManager`, `swipeTracker` and `MonitorGroup` doubles, injected in place of the real interop module
-- `tests/monitorState.test.js`, `tests/cursorMonitor.test.js`, `tests/gestureHandler.test.js`, `tests/settings.test.js` — unit tests
-- `tests/integration/playbook.md` — manual integration checklist (consolidates all phase checklists)
-- `scripts/lint.sh` — ESLint with GNOME Shell globals preset
-- `scripts/validate-schema.sh` — `glib-compile-schemas --strict schemas/` dry-run
-- `.github/workflows/ci.yml` — GitHub Actions: lint + schema validation on every push
+- `tests/run.js` — the runner. A test file **is** its side effect: importing it
+  runs its checks, each registering with the harness, and the runner totals them
+  and sets the exit status. Files are **listed, not discovered**: a file that
+  fails to load must be a hard error, and a suite that silently shrinks is worse
+  than one that breaks.
+- `tests/harness.js` — `suite()`, `section()`, `check()` and the tally. Replaces
+  the `let pass = 0, fail = 0` block that had been copy-pasted into all seven
+  files.
+- `tests/stubs.js` — the shared doubles: `Signaller` (a GObject-style signal
+  source that needs no typelib), `makeWorkspaces()`, `makeMonitorGroup()`. Kept
+  deliberately thin; a double that grows behaviour of its own starts testing
+  itself, and drifts from the real object without anything failing to say so.
+- Nine suites, one per module: `animationDriver`, `cursorMonitor`,
+  `externalWatcher`, `gestureHandler`, `keybindingHandler`, `monitorState`,
+  `settings`, `windowTracker`, `workspaceReassigner`.
+- `tests/integration/playbook.md` — every manual checklist from Phases 1-8 in one
+  document, grouped by what it exercises, with the commands that drive the
+  scriptable parts and an explicit note on the parts no script can reach.
+- `scripts/test.sh`, `scripts/lint.sh`, `scripts/validate-schema.sh`.
+- `eslint.config.mjs` and a `package.json` carrying **only** devDependencies —
+  the extension still ships no npm dependency and none of this is packaged.
+- `.github/workflows/ci.yml` — lint, schema validation **and the unit tests** on
+  every push. The tests run in CI precisely because dependency injection means
+  they need no GNOME session: `apt install gjs` is the whole setup.
+
+### Two things changed while porting
+- **Node is gone.** `monitorState` was tested under Node because it once imported
+  `Main` directly; Phase 3 made it take an injected bundle and nobody revisited
+  the harness. Its 23 checks now run under `gjs` with everything else — one
+  runner, one language, one command.
+- **`cursorMonitor` had no tests at all.** It is small, but it is the fallback
+  that decides which monitor a keystroke means when nothing is focused. Seven
+  checks now cover it, including the non-integer answers mutter can give while a
+  display is being reconfigured.
 
 ### Manual Verification Checklist
-- [ ] `gjs tests/run.js` exits 0 with all tests passing
-- [ ] `scripts/lint.sh` produces zero errors or warnings
-- [ ] `scripts/validate-schema.sh` exits 0
+- [x] `scripts/lint.sh` produces zero errors or warnings across `extension.js`,
+      `prefs.js`, `lib/` **and** `tests/`
+- [x] `glib-compile-schemas --strict` passes
+- [x] `gjs -m tests/run.js` exits 0 with all **206 checks passing** across 9
+      suites, on GNOME 46 / gjs 1.80.2. `./scripts/test.sh` and
+      `./scripts/validate-schema.sh` both exit 0 there too
+- [x] A failing check actually fails the run — verified by injecting one: the
+      suite is marked failed, the failure is listed with its detail, the process
+      exits 1, and removing it returns the run to 0. A runner that cannot fail
+      is worth nothing, so this is checked rather than assumed
+- [ ] `.github/workflows/ci.yml` goes green on a push
 - [ ] Integration playbook fully executed on Ubuntu 24.04 + GNOME 46
 
 ---
@@ -771,12 +814,15 @@ macos-workspaces@macosworkspaces.dev/
 │       └── playbook.md
 ├── scripts/
 │   ├── dev-session.sh
+│   ├── test.sh
 │   ├── lint.sh
 │   ├── validate-schema.sh
 │   └── pack.sh
 ├── .github/
 │   └── workflows/
 │       └── ci.yml
+├── eslint.config.mjs
+├── package.json
 ├── Makefile
 ├── CHANGELOG.md
 ├── LICENSE

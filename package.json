@@ -1,0 +1,15 @@
+{
+    "name": "macos-workspaces",
+    "version": "0.1.0",
+    "description": "Development tooling for the MacOS Workspaces GNOME Shell extension. The extension itself has no runtime npm dependencies and none of this is shipped.",
+    "private": true,
+    "license": "GPL-2.0-or-later",
+    "scripts": {
+        "lint": "eslint extension.js prefs.js lib tests",
+        "test": "./scripts/test.sh",
+        "validate-schema": "./scripts/validate-schema.sh"
+    },
+    "devDependencies": {
+        "eslint": "^9.9.0"
+    }
+}
