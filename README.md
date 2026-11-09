@@ -16,6 +16,8 @@ snapping back.
 > extensions.gnome.org. See [plan.md](plan.md) for how it was built and
 > [CHANGELOG.md](CHANGELOG.md) for what is in this release.
 
+> ⚠️ **Note:** Other workspace extensions can conflict with this one and may crash your session. See [Conflicts with other extensions](#conflicts-with-other-extensions).
+
 ---
 
 ## Requirements
@@ -47,6 +49,10 @@ windows on workspaces you cannot reach. If they are on, the extension leaves the
 window-moving half switched off and says so in the journal; gestures and
 shortcuts still work. Four is the minimum: three to slide within, and one to
 park everything else clear of them.
+
+Before you change these settings, check that none of your other extensions
+depend on dynamic workspaces. Some can crash the whole session when workspaces
+are fixed; see [Conflicts with other extensions](#conflicts-with-other-extensions).
 
 ---
 
@@ -84,6 +90,47 @@ These are consequences of how GNOME works, not bugs waiting to be fixed:
   most likely working on.
 - **Positions reset if displays change while the screen is locked.** They are
   preserved across an ordinary lock and unlock.
+
+---
+
+## Conflicts with other extensions
+
+> ⚠️ Your desktop may behave strangely, or crash outright, if another extension
+> touches the same parts of GNOME as this one, or expects GNOME settings this
+> extension changes.
+
+**Overriding the same hooks.** This extension takes over the workspace swipe
+gesture (the `begin`, `update` and `end` signals of the workspace animation's
+swipe tracker) and the `switch-to-workspace-left` / `-right` / `-up` / `-down`
+keyboard shortcuts. Only one extension can own each of these at a time. If
+another one also replaces them, the results depend on which extension was
+enabled last: gestures may switch every monitor at once, shortcuts may stop
+working, or the two may fight over the same switch.
+
+**Expecting different workspace settings.** This extension needs fixed
+workspaces (see [GNOME settings this needs](#gnome-settings-this-needs)). Some
+extensions assume dynamic workspaces, where GNOME creates and removes
+workspaces on demand. Those can break with fixed workspaces, and one that calls
+`remove_workspace()` on a workspace that still holds windows makes mutter abort,
+taking the whole session with it. `macos-like-maximize-to-empty-workspace@hluvmiku`
+is one known example ([#2](https://github.com/Inamul07/MacOSWorkspaces/issues/2)).
+Disable extensions like these before you set `dynamic-workspaces false`.
+
+**If your extensions all disappear after a crash.** When GNOME Shell crashes,
+GNOME turns off **every** user extension (`org.gnome.shell
+disable-user-extensions` is set to `true`). After you log back in, per-monitor
+workspaces are just gone, and nothing in the current boot's journal explains
+why. Look in the previous boot's log for the actual crash:
+
+```bash
+journalctl -b -1 -o cat /usr/bin/gnome-shell | grep -B2 -A10 'crashed\|Bail out'
+```
+
+Then remove or disable the extension that caused it, and turn extensions back on:
+
+```bash
+gsettings set org.gnome.shell disable-user-extensions false
+```
 
 ---
 
