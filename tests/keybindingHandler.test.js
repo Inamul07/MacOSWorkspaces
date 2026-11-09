@@ -55,6 +55,7 @@ function harness({focusMonitor = -1, cursorMonitor = 0, rtl = false, active = 0,
         restoreKeybindingHandler: n => registered.set(n, 'STOCK'),
     };
     const monitorState = {
+        getMonitorCount: () => 2,
         getWorkspaceCount: () => nWs,
         clampIndex: v => Math.min(Math.max(v, 0), nWs - 1),
         wrapIndex: v => ((v % nWs) + nWs) % nWs,
@@ -80,6 +81,10 @@ function harness({focusMonitor = -1, cursorMonitor = 0, rtl = false, active = 0,
     return {
         handler, registered, groups, state,
         press: name => registered.get(name)(null, null, {get_name: () => name}),
+        // Let a test move focus or the pointer between keystrokes, which is
+        // exactly what the Shell does underneath a real switch.
+        setFocus: m => { focusMonitor = m; },
+        setCursor: m => { cursorMonitor = m; },
     };
 }
 
@@ -104,6 +109,40 @@ section('focus decides the monitor');
         `(map ${JSON.stringify([...h.state.map])})`);
     check('only monitor 1 animated', h.groups[1].eased !== null && h.groups[0].eased === null);
     check('non-primary did not activate globally', h.state.activated.length === 0);
+}
+
+section('a run of keystrokes stays on one display');
+{
+    // The bug this guards: switching the primary onto an empty workspace leaves
+    // nothing focused there, so mutter hands focus to a window still visible on
+    // a secondary monitor. Resolving purely by focus then sends the very next
+    // keystroke to that other display, and the user cannot get back without
+    // clicking.
+    const h = harness({focusMonitor: 0, cursorMonitor: 0, nWs: 4});
+    h.press('switch-to-workspace-right');
+    check('first press moved the primary', h.state.map.get(0) === 1,
+        `(map ${JSON.stringify([...h.state.map])})`);
+
+    h.setFocus(1);
+    h.press('switch-to-workspace-right');
+    check('second press moved the primary again, not the monitor focus jumped to',
+        h.state.map.get(0) === 2 && h.state.map.get(1) === 0,
+        `(map ${JSON.stringify([...h.state.map])})`);
+    check('the secondary never animated', h.groups[1].eased === null);
+}
+
+section('the pointer moving is how the user changes display');
+{
+    const h = harness({focusMonitor: 0, cursorMonitor: 0, nWs: 4});
+    h.press('switch-to-workspace-right');
+
+    // Clicking on the other monitor moves focus AND the pointer together, which
+    // is the case the run is meant to yield to.
+    h.setFocus(1);
+    h.setCursor(1);
+    h.press('switch-to-workspace-right');
+    check('focus and pointer agreeing hands the run to monitor 1',
+        h.state.map.get(1) === 1, `(map ${JSON.stringify([...h.state.map])})`);
 }
 
 section('cursor is the fallback');
